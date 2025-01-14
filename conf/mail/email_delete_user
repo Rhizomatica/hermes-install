@@ -1,0 +1,38 @@
+#!/bin/bash
+USAGE="Usage: $0 EMAIL";
+
+if [ ! -n "$1" ]
+then
+    echo $USAGE;
+    exit 1;
+fi
+
+USERNAME=$(echo "$1" | cut -f1 -d@);
+DOMAIN=$(echo "$1" | cut -f2 -d@);
+ADDRESS=$1;
+
+BASEDIR="$(postconf | grep ^virtual_mailbox_base | cut -f3 -d' ')";
+
+if [ -f "/etc/postfix/vmailbox" ] && [ -f "/etc/postfix/virtual_alias" ] && [ -d "$BASEDIR/$DOMAIN/" ]
+then
+
+    echo "Removing Postfix user configuration..."
+    sed -i "/$ADDRESS/d" /etc/postfix/vmailbox
+    postmap /etc/postfix/vmailbox
+
+    echo "Removing Postfix forward configuration..."
+    sed -e "s/ $ADDRESS//g" -i /etc/postfix/virtual_alias
+    postmap /etc/postfix/virtual_alias
+
+
+	echo "Removing Dovecot user configuration..."
+    sed -i "/$ADDRESS/d" $BASEDIR/$DOMAIN/passwd
+    sed -i "/$ADDRESS/d" $BASEDIR/$DOMAIN/shadow
+
+    systemctl restart postfix
+    systemctl restart dovecot
+
+    exit 0
+else
+    exit 3
+fi

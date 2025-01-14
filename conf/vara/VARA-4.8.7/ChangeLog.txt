@@ -1,0 +1,348 @@
+v4.8.7 (25/03/2024)  
+
+  Fixed COM Port List for Win11
+
+  New Command DRIVELEVEL fro VarAC
+
+
+v4.8.6 (17/03/2024)  
+ 
+  DCD improvement for Levels 5-9
+
+  Added Remote PTT.
+  When VARA is running in a different computer than Winlink, VarAC or any other App, a PTT menu is available.
+  The PTT menu does not support frequency setting, but at least you can switch the PTT remotely.
+  
+  Ignore KISS DCD option. This is useful for APRS operation during the RTYY contests.
+  This option is not saved in the VARA.ini file, it is always disabled everytime you start VARA
+
+
+v4.8.5 (24/02/2024)  
+
+  New KISS frame format without replacing the ToCalls with "APVARA"
+
+  Fixed Status APRS Frames
+
+  Fixed decoding KISS Frames by non-registered VARA users
+
+v4.8.4 (11/02/2024)  
+
+  Fixed decoding problem with the second Gateway callsign in Mode 500
+
+
+v4.8.3 (07/02/2024)  
+
+  Compatible with v4.7.3 or newer
+
+  Improvements in Busy detection
+ 
+  Added 0.3-Persistence in KISS Port
+
+  SN command is sent to Winlink. Neccesary for a new Winlink feature to automatically select the best RMS based on current propagation
+
+  New KISS TCP implementation With Speed Levels 1-2-4 for a more robuss transmission. 
+  KISS Modes are selected automatically acccording the KISS frame size.
+  Allows you to send APRS Position Messages in Speed level 1 with low power, using any APRS app with a KISS Port (PinPoint, APRSDroid, APRSIS32...) 
+  Also useful to send short CQ and Broadcast messages with VarAC
+
+  With Encryption connections, prevents them from Winlink double session when two stations call to the same sation at the same time.
+  This will be true only if all the stations update to v4.8.2 For non-Encryption connections, this was already fixed since v4.5.5
+
+  Independent detection of missing input/output soundcard devices
+  
+
+v4.8.1  (01/01/2024)
+
+  A new KISS TCP implementation supports 2+8 call signs.
+  This new KISS interface is not longer compatible with old versions. Update as soon as possible
+ 
+
+v4.8.0  (23/12/2023)
+
+
+  KISS TCP Port allows multiple clients (only for registered VARA users)
+ 
+
+  Added Yaesu FT-891
+  
+
+v4.8.0  (07/12/2023)
+
+  Soundcard Channel Selection (L,R,L+R) in the Soundcard menu
+
+
+v4.7.9  (05/12/2023)
+
+  DCD for KISS Frames. VARA wait until the channel is free, then send the KISS frame.
+
+  Fragmentation frames in KISS to reach more capacity and support all the APRS frames.
+  
+  Possibility to send large size broadcast frames (5000 bytes maximum). Useful for sending bulletins or new developments.
+
+                     VARA KISS Frame types
+
+    |................. 5000 bytes max.  ..................|
+
+    192  0  |... AX25 Frame (standard)       ...... |  192     
+    192  1  |... AX25 Frame (7 chrs Call Signs) ... |  192        
+    192  2  |... Unformatted frame         ........ |  192  
+
+  
+  Soundcard Channel Selection (L/R) in the VARA.ini file. By default is Left:
+
+  [Soundcard]
+  Channel=Left
+
+
+
+v4.7.8  (25/11/2023)
+
+  KISS Port compatible with APRSdroid
+
+  Fixed bug with CAT/COM PTT configuration in KISS mode
+
+  Tested by Michael NA7Q 
+
+
+v4.7.7  (19/06/2023)
+
+  Added AES 256 Encryption.
+  This option is only available with special call signs for Police, Goverment agencies, etc... out of Ham bands
+
+  New commands from VARA to App:
+
+  ENCRYPTION DISABLED
+  ENCRYPTION READY
+ 
+  UNENCRYPTED LINK
+  ENCRYPTED LINK
+      
+
+v4.7.6  (08/06/2023)
+
+  Compatible with future changes in future versions
+  
+  New RETRIES Command for a new Winlink Express feature
+
+  Fixed "Incoming connection..." bug in the .Log file with CQ and KISS messages
+
+  KISS Frame type #2, useful for sending Generic Data:
+
+    192  0  |... AX25 Frame Standard          ... |  192     
+    192  1  |... AX25 Frame 7 chrs Call Signs ... |  192        
+    192  2  |... Generic Data                 ... |  192  
+
+  New menu View -> Gauges+Diagram
+
+  Fixed problem with Space in some Soundcard Device names
+  
+
+v4.7.2  (13/01/2023)
+
+  SN command with KISS frames received
+
+v4.7.1  (29/12/2022)
+
+  Busy Detector moved after filtering stage. This avoid false busy flag by adjacent channels
+
+v4.6.9  (29/11/2022)
+
+  Fixed CQ Frame
+
+v4.6.8  (28/11/2022)
+
+  Fixed problem with KISS interface
+
+
+v4.6.5  (09/11/2022)
+
+  KISS Interface supports AX-25 with 7 chars call signs
+  Fixed problem with KISS interface and VarAC
+
+
+v4.6.4  (07/11/2022)
+
+  Fixed "soundcard device not ready" at each startup in some W7 laptop. Tested by William KJ7BIH  
+
+  Added CLEANTXBUFFER command. This command erase the transmission buffer, in case of transmission have not started yet.
+  Useful for VarAC Chat
+
+  Enable KISS interface when receiving the CHAT ON command. Useful for VarAC Chat
+  The KISS interface continue disabled with Winlink apps to avoid QRM.
+
+  Added VERSION Command, which return the VARA Version
+
+
+v4.6.3  (05/09/2022)
+ 
+  Fixed REQ Loop problem in ANAN SDR. Tested by Larry W6LVP
+  
+  Fixed Monitor decoding issue in v4.6.2
+
+  Added intertia to the VU Needle like in analog VU meters
+
+
+v4.6.2  (29/04/2022)
+
+  Added TUNE commands to adjust ALC directly from VarAC. 
+
+
+v4.6.1  (24/03/2022)
+
+  Fixed problem with some DRA boards
+  
+  Fixed problem with ACK KISS Frames
+
+
+v4.6.0  (12/02/2022)
+
+  Fixed problem with VarAC chat.
+
+  Fixed a problem with Winlink Express MYCALL command in some computers
+
+
+v4.5.9  (08/02/2022)
+
+  To deal with the Trimode "deaf band" issue, VARA disconnects automatically if receives LISTEN ON/OFF command in the middle of a connection. 
+
+
+v4.5.8  (08/02/2022)
+
+  Fix a Trimode problem with the Winlink Hybrid Network: Remove the "-R" suffix automatically when the connection ends.
+ 
+
+v4.5.7  (02/02/2022)
+
+  Improvement in the connection with RMS Gateways
+
+  Improvement in the ACK handling
+
+  Log Link open the VARAHF.ini file in the Notepad, with the scrollbar at the end of the file.
+
+  SN command is sent to Chat app with the CQ frame
+
+  Added 300ms overhead to the first Gateway response to facilitates the antenna matching by the ATU after scanning bands
+
+  Supports file transfer until 600.000 bytes
+
+  New commands: "WINLINK SESSION" and "P2P SESSION"  (Client Station-->VARA)
+
+  "WINLINK SESSION" command  (By default)
+     VARA send retries following a 4.0 seconds cycle, necessary to connect with the RMS Gateways (DWELL time 4s)
+
+  "P2P SESSION" command
+     Set the retrie cycle to 4.6 seconds to allow connecting two SDR's at maximum latency (worst case)
+     This command must be used for P2P connections, not for Gateways connections.
+
+  Integrated Syslog Client (only for VARA registered stations):
+    Syslog is a standard for message logging developed in the 1980s by Eric Allman.
+    It can used for remote VARA RMS Gateways diagnosis in real time.
+    You will need to install a Syslog Server. I am using "Syslog Watcher":  https://ezfive.com/syslog-watcher/
+
+
+v4.5.5  (09/01/2022)
+
+  Avoid "finite" BREAK Loops when the Winlink Server data flux fails.
+
+  Avoid Winlink double session when two stations call to the same sation at the same time.
+  This will be true only if all the stations update to v4.5.5
+
+  Fixed starting connection issue: Level#4 NACK -> Level#3 NACK -> Level#2 NACK -> Level#1 start the connection
+
+  Timing improvements
+
+  Send the HF Bandwith (500,2300,2750) in the CONNECTED command
+
+  Plug & Play facility for the RA-Board interface
+
+  New command CHAT ON/OFF (Temporary, "CHAT ON" and "LISTEN CQ" are the same). By default is "CHAT OFF"
+ 
+  "CHAT ON" command: 
+    - Optimizes VARA timing for using with chat type apps like VARA Chat, VarAC, Varim ....
+    - Listen CQ Frames
+    - Support high latency to connect two FlexRadio's: SDR<->SDR
+    - Infinite Idle loop. Allows both stations to be in sync forever, until the path dies
+    - Send the SN command for each data block received.
+    - Optimize the handover interchange for keyboard to keyboard.
+    - This command should not be used with Winlink or B2F protocol apps.
+    - Includes the LISTEN ON command
+
+  "CHAT OFF" command: 
+    - Optimize the handover interchange for Winlink, B2F protocol, BBS, etc...
+    - Limited Idle Loops. Avoid the stations stay connected forever in a loop.
+    - Latency limited according Trimode Scan time of 4 seconds. Only one Flexradio can be used in the link: SDR<->Analog Rig or Analog Rig<->SDR
+
+   "MISSING SOUNDCARD" command:
+    - This command is sent from VARA to the external application when the USB Soundcard driver has crashed (typically due to RF or high SWR on low bands) 
+    - The only way to recovery the driver is restarting the PC. This task is for the external application. 
+     
+
+
+v4.5.0  (09/12/2021)
+
+  PTT Menu available when the KISS Interface is connected.
+
+  Enable both VARA Chat and APRS app in a same VARA stance. In this case the PTT switching is done by VARA Chat
+
+  Send S/N information to VarAC (HF Chat)
+
+
+v4.4.9  (05/11/2021)
+
+  KISS Interface. Useful for APRS over VARA HF
+
+  Compatible with the new CQ function in VARA Chat v1.2.7
+
+  Fixed overlapping during the VARA Chat operation
+
+
+v4.4.6  (01/09/2021)
+
+  Prevent abrupt disconnect when using the express "review messages first" feature, and the operator take too much time selecting the messages.
+
+
+v4.4.5  (03/08/2021)
+
+  Less Idle CPU Usage in Gateway stations, as compatibility with old 16-bit hash versions have been definitevely removed.
+
+  Compatibility with new Trimode versions.
+  
+
+v4.4.3  (10/04/2021)
+
+  VARA Compression added, which reduce connect overhead for weak signal conditions. 
+  Averaged simulation runs showed improvements of a factor of 2 in the Speed Level 1. 
+  The improvement becomes more modest as the SNR is improved (until Speed Level 6). 
+  Messages which already have Winlink applied B2F compression are not compressed.
+
+  Compression also accelerates dramatically the BBS throughput (using VARA Terminal v1.1.5)
+  Thus, BBS Lists are accelerated by 3.0, Forecast messages by 2.6 and MARS Encrypted Data by 1.5
+
+  This great feature is active only for registered users
+
+  The previous release version of VARA uses a 16-bit hash to resolve the callsign and this has a small but finite chance of getting the call wrong (One in 6553 error rate). 
+  John Wiseman detected and reported a case he observed this happening. 
+  Now this is changed to a 32-bit representation which will essentially eliminate the chance of this happening. 
+  
+
+v4.4.2  (19/03/2021)
+
+  Fixed Compression Command compatibility with Winlink Express 
+
+
+v4.4.1  (13/03/2021)
+   
+   Fixed problem with Trimode scanning frequencies
+   Less latency in high speed levels
+
+
+v4.4.0  (26/02/2021)
+   
+   Compatibility with future changes in the next VARA version
+   Necessary sysops update this v4.4.0 as soon as be possible, before releasing the next VARA version with important innovations.
+
+   Fixed BREAK loop in case of CMS connection failure in the middle of a VARA connection.
+
+   ChangeLog in Help menu
+  
+   

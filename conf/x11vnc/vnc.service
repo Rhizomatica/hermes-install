@@ -1,0 +1,17 @@
+[Unit]
+Description=vnc server
+Requires=x11.service
+After=x11.service
+
+[Service]
+Type=exec
+User=root
+Group=root
+WorkingDirectory=/root
+ExecStart=x11vnc -display WAIT:69 -forever -usepw -quiet -listen 0.0.0.0 -xkb -auth /root/.Xauthority
+KillSignal=SIGKILL
+
+[Install]
+WantedBy=multi-user.target
+
+

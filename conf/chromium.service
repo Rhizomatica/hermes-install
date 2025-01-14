@@ -1,0 +1,13 @@
+[Unit]
+Description=Chromium Kiosk
+After=nginx.service
+
+[Service]
+Type=exec
+User=pi
+Group=pi
+ExecStart=startx -- -nocursor -nolisten tcp
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

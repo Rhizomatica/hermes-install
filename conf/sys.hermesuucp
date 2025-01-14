@@ -1,0 +1,63 @@
+time any
+
+chat-timeout 900
+call-login user
+call-password pass
+chat "" \r
+
+port HFP
+
+forward ANY
+commands rmail crmail bash uucp uuadm ubitx_client sudo dec_sensors dec_message
+
+protocol y
+protocol-parameter y packet-size 512
+protocol-parameter y timeout 5400
+
+system B0DK
+alias gw
+
+system B0DK-1
+alias station1
+
+system B0DK-2
+alias station2
+
+system B0DK-3
+alias station3
+
+system B0DK-4
+alias station4
+
+system B0DK-5
+alias station5
+
+system B0DK-6
+alias station6
+
+system B0DK-7
+alias station7
+
+system B0DK-8
+alias station8
+
+system B0DK-9
+alias station9
+
+system B0DK-10
+alias station10
+
+system B0DK-11
+alias station11
+
+system B0DK-12
+alias station12
+
+system B0DK-13
+alias station13
+
+system B0DK-14
+alias station14
+
+system B0DK-15
+alias station15

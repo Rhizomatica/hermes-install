@@ -1,0 +1,16 @@
+[Unit]
+Description=Qt Kiosk Browser
+After=nginx.service network-online.target
+Conflicts=getty@tty1.service
+
+
+[Service]
+Type=exec
+User=pi
+Group=pi
+Environment="QT_QPA_EGLFS_HIDECURSOR=1"
+ExecStart=/usr/bin/qt-kiosk-browser -platform eglfs /etc/qt-kiosk-browser.conf
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

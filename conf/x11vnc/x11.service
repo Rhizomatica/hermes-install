@@ -1,0 +1,14 @@
+[Unit]
+Description=X server
+After=syslog.target sbitx.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root
+ExecStart=xvfb-run --server-args="-screen 0 1024x768x24" -f /root/.Xauthority -n 69 -l xstartup
+KillSignal=SIGKILL
+
+[Install]
+WantedBy=multi-user.target
