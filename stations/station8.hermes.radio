@@ -1,0 +1,43 @@
+## This is the HERMES language definition... options are: us, pt and es
+HERMES_LANGUAGE="en"
+
+# hardware type (ubitx, sbitx)
+HARDWARE=${HARDWARE:="sbitx"}
+
+## set timezone
+TIMEZONE="Etc/UTC"
+
+## This is the HERMES station type. Options are "remote" or "gateway".
+HERMES_ROLE="remote"
+
+## This is the HERMES station rule to select between environments (PRODUCTION/DEVELOPMENT)
+HERMES_PRODUCTION="true"
+
+## GUI LOGIN BEHAVIOUR
+REQUIRE_LOGIN="false"
+
+## Has GPS connected?
+HAS_GPS="false"
+
+##GUI EMERGENCY EMAIL FOR CONTACT 
+EMERGENCY_EMAIL="emergency@hermes.radio"
+
+## Forward email
+HERMES_FWD_EMAIL="all@station8.hermes.radio"
+
+## UUCP NETWORK
+UUCP_NET="hermesuucp"
+
+## Callsign
+CALLSIGN="B0DK-8"
+UUCP_ALIAS="station8"
+
+HERMES_HOSTNAME="station8.hermes.radio"
+
+SSL_DOMAIN="hermes.radio"
+
+# set true for first installation
+FIRST_INSTALL="true"
+
+### VARA key - put your VARA key here, and change the CALLSIGN variable to your callsign
+VARA_KEY=""
