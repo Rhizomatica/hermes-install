@@ -1,0 +1,15 @@
+#!/bin/sh
+#vncconfig -iconic &
+
+cp /opt/VARA/VARA.ini.default /opt/VARA/VARA.ini
+
+# remove .wine directory to prevent corruption
+#rm -rf /root/.wine
+# and copy our defaults?
+
+# run VARA
+/usr/bin/xterm -bg black -fg green -e wine /opt/VARA/VARA.exe &
+
+# xrdb $HOME/.Xresources
+/usr/bin/wmaker
+

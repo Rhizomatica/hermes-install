@@ -1,0 +1,16 @@
+#!/bin/sh
+# .xinitrc for Pi 7" 720x1280 kiosk
+
+# Rotate display 270° (left)
+xrandr --output DSI-1 --rotate left
+
+# Optional: map touchscreen axes if needed
+# Adjust /dev/input/eventX to your touchscreen device
+#xinput set-prop "FT5406 memory based driver" "Evdev Axes Swap" 1
+#xinput set-prop "FT5406 memory based driver" "Evdev Axis Inversion" 1 1
+
+# Launch Qt kiosk browser
+openbox &
+unclutter -idle 0 &
+#wmaker &
+/usr/bin/qt-kiosk-browser -platform xcb /etc/qt-kiosk-browser.conf

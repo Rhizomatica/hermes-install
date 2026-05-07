@@ -1,0 +1,48 @@
+## This is the HERMES language definition... options are: us, pt and es
+HERMES_LANGUAGE="{{HERMES_LANGUAGE}}"
+
+## DISPLAY NEW RADIO
+DISPLAY_TYPE="v2"
+
+# hardware type (ubitx, sbitx)
+HARDWARE=${HARDWARE:="sbitx"}
+
+## set timezone
+TIMEZONE="{{TIMEZONE}}"
+
+
+## This is the HERMES station type. Options are "remote" or "gateway".
+HERMES_ROLE="{{HERMES_ROLE}}"
+
+## This is the HERMES station rule to select between environments (PRODUCTION/DEVELOPMENT)
+HERMES_PRODUCTION="true"
+
+## GUI LOGIN BEHAVIOUR
+REQUIRE_LOGIN="false"
+
+## Has GPS connected?
+HAS_GPS="false"
+
+##GUI EMERGENCY EMAIL FOR CONTACT 
+EMERGENCY_EMAIL="emergency@hermes.radio"
+
+## Forward email
+HERMES_FWD_EMAIL="todos@{{NOME_BASE}}.hermes.radio"
+
+## UUCP NETWORK
+UUCP_NET="{{UUCP_NET}}"
+
+## Callsign
+CALLSIGN="{{VARA}}-{{NUMERO_SEQUENCIA}}"
+UUCP_ALIAS="{{NOME_BASE}}"
+
+HERMES_HOSTNAME="{{NOME_BASE}}.hermes.radio"
+
+SSL_DOMAIN="hermes.radio"
+
+# set true for first installation
+FIRST_INSTALL="true"
+
+# VARA key
+
+VARA_KEY=""

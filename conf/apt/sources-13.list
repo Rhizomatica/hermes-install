@@ -1,0 +1,7 @@
+deb http://deb.debian.org/debian trixie main main non-free-firmware
+deb-src http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+
+deb http://security.debian.org/ trixie-security main contrib non-free non-free-firmware
+deb-src http://security.debian.org/ trixie-security main contrib non-free non-free-firmware
+
+deb http://deb.debian.org/debian-debug trixie-debug main contrib non-free non-free-firmware

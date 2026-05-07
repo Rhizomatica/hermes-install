@@ -1,0 +1,16 @@
+[Unit]
+Description=Qt Kiosk Browser on X11
+After=network.target
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+Environment=DISPLAY=:0
+Environment=QT_VIRTUALKEYBOARD_STYLE=compact
+ExecStart=/usr/bin/startx /home/pi/.xinitrc --
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
