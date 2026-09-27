@@ -155,6 +155,16 @@ do_radiod_setup()
         ini_set_main ${core} radio_backend hfsignals
         ini_set_main ${core} hw_profile sbitx
         ini_set_main ${core} i2c_dev /dev/i2c-sbitx
+        # D-STAR sends the station's callsign in every over: the callsign
+        # without its -N, at most 8 characters.
+        local mycall="${CALLSIGN%%-*}"
+        mycall="${mycall^^}"
+        ini_set_main ${core} dstar_mycall "${mycall:0:8}"
+        # What the web interface's Digital voice switch runs; a station file
+        # without it leaves core.ini as it is (radiod's default is RADEV2).
+        if [ -n "${DIGITAL_VOICE_CODEC}" ]; then
+            ini_set_main ${core} digital_voice_codec "${DIGITAL_VOICE_CODEC^^}"
+        fi
     else
         # The daemon bridges the rig's USB codec to the snd-aloop cards the
         # modem uses, as the sBitx does with its own codec.
