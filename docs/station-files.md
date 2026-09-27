@@ -37,6 +37,7 @@ suggestion.
 | `HARDWARE` | `sbitx` | required | `sbitx`, `hamlib` (a CAT radio through Hamlib) or `ubitx` (PC). Written as `HARDWARE=${HARDWARE:="sbitx"}`, so the environment can override it. |
 | `RADIO_CONTROLLER` | `radiod` | `sbitx_controller` on an sBitx, `radiod` with Hamlib | The program that drives the radio: `radiod` (hermes-radio-daemon) or `sbitx_controller`. Only one runs; installing one replaces the other. |
 | `DISPLAY_TYPE` | `v2` | `v1` | sBitx display: `v1` or `v2` (the 7-inch DSI one). |
+| `DIGITAL_VOICE_CODEC` | `dstar` | radiod's own (`radev2`) | sBitx with radiod: what the web interface's Digital voice switch runs, `radev2` (RADEv2, FreeDV) or `dstar` (D-STAR, with the station's callsign without its `-N` as MYCALL). |
 | `RIG_MODEL` | `3070` | required with `hamlib` | Hamlib model number (`rigctl -l`). |
 | `RIG_DEVICE` | `/dev/ttyUSB0` | `/dev/ttyUSB0` | The radio's CAT serial port. |
 | `RIG_SERIAL_RATE` | `19200` | `19200` | Serial speed. |

@@ -18,7 +18,7 @@
 # the end of the file.
 STATION_VARS="HERMES_HOSTNAME CALLSIGN UUCP_ALIAS UUCP_NET HERMES_ROLE \
 HERMES_LANGUAGE TIMEZONE SSL_DOMAIN EMERGENCY_EMAIL HERMES_FWD_EMAIL \
-HARDWARE RADIO_CONTROLLER DISPLAY_TYPE \
+HARDWARE RADIO_CONTROLLER DISPLAY_TYPE DIGITAL_VOICE_CODEC \
 RIG_MODEL RIG_DEVICE RIG_SERIAL_RATE RIG_PTT_TYPE RIG_AUDIO_DEVICE \
 SOUND_CARD INSTALL_FIRMWARE RADUINO_VER \
 MODEM_TYPE VARA_KEY NNCP_ENABLED UUCP_PRE_AGREED \
@@ -42,6 +42,7 @@ station_defaults()
     HARDWARE="sbitx"
     RADIO_CONTROLLER="radiod"
     DISPLAY_TYPE="v2"
+    DIGITAL_VOICE_CODEC="radev2"
     RIG_MODEL=""
     RIG_DEVICE="/dev/ttyUSB0"
     RIG_SERIAL_RATE="19200"
@@ -171,6 +172,12 @@ RADIO_CONTROLLER="${RADIO_CONTROLLER}"
 ## sBitx display: v1 or v2
 DISPLAY_TYPE="${DISPLAY_TYPE}"
 EOF
+            if [ -n "${DIGITAL_VOICE_CODEC}" ]; then
+                cat << EOF
+## What the web interface's Digital voice switch runs (radiod): radev2 or dstar
+DIGITAL_VOICE_CODEC="${DIGITAL_VOICE_CODEC}"
+EOF
+            fi
             ;;
         hamlib)
             cat << EOF
@@ -274,6 +281,15 @@ station_check()
         [[ "${RIG_MODEL}" =~ ^[0-9]+$ ]] || echo "Hamlib radios need RIG_MODEL, a number (rigctl -l)"
         [[ "${RIG_SERIAL_RATE}" =~ ^[0-9]+$ ]] || echo "Serial rate \"${RIG_SERIAL_RATE}\" is not a number"
     fi
+    case "${DIGITAL_VOICE_CODEC}" in
+        ""|radev2) ;;
+        dstar)
+            if [ "${HARDWARE}" != "sbitx" ] || [ "${RADIO_CONTROLLER}" != "radiod" ]; then
+                echo "D-STAR digital voice needs an sBitx with radiod"
+            fi
+            ;;
+        *) echo "Digital voice \"${DIGITAL_VOICE_CODEC}\" is radev2 or dstar" ;;
+    esac
     if [ "${HARDWARE}" = "ubitx" ] && [ -n "${installer_dir}" ] \
        && [ ! -f "${installer_dir}/conf/asound.state.${SOUND_CARD}" ]; then
         echo "No conf/asound.state.${SOUND_CARD} for this sound card"

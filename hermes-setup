@@ -189,6 +189,10 @@ station_edit()
                 sbitx_controller "The older sbitx_controller")" || return 1
             DISPLAY_TYPE="$(ask_menu "Display" "The sBitx's display." "${DISPLAY_TYPE}" \
                 v1 "Original display" v2 "7-inch DSI display (rotated)")" || return 1
+            if [ "${RADIO_CONTROLLER}" = "radiod" ]; then
+                DIGITAL_VOICE_CODEC="$(ask_menu "Digital voice" "What the web interface's Digital voice switch runs." "${DIGITAL_VOICE_CODEC:-radev2}" \
+                    radev2 "RADEv2 (FreeDV)" dstar "D-STAR")" || return 1
+            fi
             ;;
         hamlib)
             RADIO_CONTROLLER="radiod"
