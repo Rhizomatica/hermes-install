@@ -12,9 +12,9 @@ do_gui_install()
     cd hermes-gui/
 
     if [ "${VERSION_ID:-}" = "13" ]; then
-        if [ ${HERMES_PRODUCTION} = "false" ]; then
+        if [ -n "${HERMES_GUI_BRANCH:-}" ]; then
             git fetch
-            git checkout development
+            git checkout "${HERMES_GUI_BRANCH}"
         fi
         npm install -g @angular/cli@18.2.21 --legacy-peer-deps --force
     else
@@ -28,7 +28,7 @@ do_gui_install()
     {
         echo "DOMAIN=${HERMES_HOSTNAME}"
         echo "LOCAL=false"
-        echo "PRODUCTION=${HERMES_PRODUCTION}"
+        echo "PRODUCTION=true"
         echo "HAS_GPS=${HAS_GPS:-false}"
         echo "GPS_MAP=${GPS_MAP:-bangladesh}"
         echo "GATEWAY=$( [ "${HERMES_ROLE}" = "gateway" ] && echo true || echo false )"

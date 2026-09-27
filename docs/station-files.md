@@ -75,7 +75,6 @@ what the radio has.
 | `HAS_GPS` | `false` | `false` | A GPS is connected. |
 | `GPS_MAP` | `brazil` | `bangladesh` | The map the web interface shows with a GPS. |
 | `REQUIRE_LOGIN` | `false` | required | The web interface asks for a login. |
-| `HERMES_PRODUCTION` | `true` | required | `false` installs the development branches of the API and web interface. |
 | `HERMES_HARDENING` | `false` | `false` | Random per-station passwords, key-only SSH, the station's own TLS certificate, WPA2/WPA3 WiFi. Off keeps what deployed networks expect. |
 | `MAIL_ENCRYPTION` | `true` | `true` | Encrypted mailboxes (Debian 13). |
 
@@ -88,5 +87,5 @@ than staying in the file:
 |---|---|
 | `FIRST_INSTALL` | `true` redoes the first-install steps (mail server and webmail configuration). Detected by the installer; do not keep it in a station file. |
 | `HERMES_ERASE_DB` | `true` starts the station's databases over. |
-| `HERMES_NET_BRANCH`, `HERMES_RADIO_DAEMON_BRANCH`, `HERMES_API_BRANCH` | Install a branch of hermes-net, hermes-radio-daemon or the API, to try it before it is merged. |
+| `HERMES_NET_BRANCH`, `HERMES_RADIO_DAEMON_BRANCH`, `HERMES_API_BRANCH`, `HERMES_GUI_BRANCH` | Install a branch of hermes-net, hermes-radio-daemon, the API or the web interface, to try it before it is merged. Without one, every station gets `main`. |
 | `UUCP_BRANCH` | The uucp branch to build when the installed uucp is too old for the pre-agreed startup. |
