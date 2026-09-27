@@ -1,0 +1,35 @@
+#!/bin/bash
+#
+# hermes-auditlog-send: ship this station's audit trail to the gateway over
+# NNCP, so a station that is tampered with cannot quietly erase its own logs.
+#
+# Sent encrypted and authenticated, like any other NNCP packet. Runs daily.
+
+set -o nounset
+
+AUDIT_NODE="${AUDIT_NODE:-gw}"
+SINCE="${SINCE:-24 hours ago}"
+STATION="$(cat /etc/hostname)"
+
+# nothing to do on the gateway itself
+if [ ! -s /etc/nncp.hjson ]; then
+    exit 0
+fi
+if ! nncp-cfgmin 2> /dev/null | grep -q "^[[:space:]]*${AUDIT_NODE}:"; then
+    echo "hermes-auditlog-send: no neighbour ${AUDIT_NODE}, nothing to do"
+    exit 0
+fi
+
+{
+    echo "# station: ${STATION}"
+    echo "# since: ${SINCE}"
+    echo
+    echo "## authentication"
+    journalctl --since "${SINCE}" -u ssh -u sudo _COMM=sudo _COMM=sshd --no-pager -q 2> /dev/null | tail -n 500
+    echo
+    echo "## transport"
+    journalctl --since "${SINCE}" -u nncp-daemon -u nncp-caller --no-pager -q 2> /dev/null | tail -n 500
+    echo
+    echo "## nncp packets"
+    nncp-log 2> /dev/null | tail -n 200
+} | nncp-exec -quiet "${AUDIT_NODE}" auditlog "${STATION}"

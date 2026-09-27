@@ -1,0 +1,402 @@
+#!/bin/bash
+#
+# hermes-nncp-mesh: create this station's NNCP keys (only once) and
+# (re)generate its full-mesh neighbour list.
+#
+# Usage: hermes-nncp-mesh <station_name> [installer_dir]
+#        hermes-nncp-mesh --postfix-transport <station_name> [installer_dir]
+#            only rebuild the Postfix map of mail sent straight to neighbours
+#
+# station_name is a file in <installer_dir>/stations/. Every other station
+# with the same UUCP_NET becomes an NNCP neighbour, provided its public keys
+# are in <installer_dir>/conf/nncp/pub/<station_name>.
+#
+# Private keys are generated on the station and never leave it. The public
+# keys are written to ${NNCP_DIR}/<station_name>.pub, to be committed to
+# conf/nncp/pub/ in the installer repository.
+#
+# The configuration is kept in NNCP's directory layout under ${NNCP_DIR} and
+# compiled to ${NNCP_CFG} with nncp-cfgdir. Neighbours created by this script
+# carry a .hermes-generated marker; neighbours added by hand are kept.
+
+set -o nounset
+set -o errexit
+set -o pipefail
+
+NNCP_DIR="${NNCP_DIR:-/etc/nncp}"
+NNCP_CFG="${NNCP_CFG:-/etc/nncp.hjson}"
+NNCP_SPOOL="${NNCP_SPOOL:-/var/spool/nncp}"
+NNCP_INCOMING="${NNCP_INCOMING:-/var/spool/nncp/incoming}"
+# Mercury drops a session after 180 s without delivery progress, so a
+# healthy HF session can stay silent for about that long; above that, every
+# second is idle airtime after the last packet (NNCP holds the session open
+# until this deadline, and Mercury keeps the link up with keepalives).
+NNCP_ONLINE_DEADLINE="${NNCP_ONLINE_DEADLINE:-240}"
+# NNCP pings a silent peer every minute by default, and on HF each 32 B
+# PING costs a modem turn and a whole data frame (~5 s of airtime): an idle
+# session keyed both radios once a minute until the deadline above. Above
+# NNCP_ONLINE_DEADLINE, an idle session now ends without any PING. Dead
+# links are still noticed: Mercury reports DISCONNECTED on its own.
+NNCP_PING_INTERVAL="${NNCP_PING_INTERVAL:-600}"
+# the network's gateway, which holds the broadcast area (see below)
+NNCP_GATEWAY_ALIAS="${NNCP_GATEWAY_ALIAS:-gw}"
+HERMES_ETC="${HERMES_ETC:-/etc/hermes}"
+# When a station calls a neighbour it has traffic for (NNCP_CALL_CRON, set
+# below from the station's callsign unless given).
+NNCP_CALL_CRON="${NNCP_CALL_CRON:-}"
+HF_TNC="${HF_TNC:-127.0.0.1:8300}"
+HF_BW="${HF_BW:-2300}"
+# PTT keying done by NNCP itself ("hermes" or "hamlib", "none" to disable).
+# Default: where the radio is keyed through hermes_shm (an sbitx, or
+# hermes-radio-daemon on either backend, e.g. an IC-7100 over Hamlib CAT),
+# NNCP keys it, as uucpd -o shm did for both VARA and Mercury, unless Mercury
+# is configured to key it itself.
+HF_PTT="${HF_PTT:-}"
+MERCURY_INI="${MERCURY_INI:-/etc/mercury/mercury.ini}"
+RADIO_DAEMON_INI="${RADIO_DAEMON_INI:-${HERMES_ETC}/core.ini}"
+HF_HANDLERS="rmail crmail dec_sensors dec_message auditlog areakey"
+
+ONLY_POSTFIX_TRANSPORT=false
+if [ "${1:-}" = "--postfix-transport" ]; then
+    ONLY_POSTFIX_TRANSPORT=true
+    shift
+fi
+
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    echo "Usage: $0 [--postfix-transport] <station_name> [installer_dir]" >&2
+    exit 1
+fi
+
+STATION_NAME="$1"
+INSTALLER_DIR="${2:-.}"
+STATIONS_DIR="${INSTALLER_DIR}/stations"
+PUB_DIR="${INSTALLER_DIR}/conf/nncp/pub"
+
+warn()
+{
+    echo "hermes-nncp-mesh: $*" >&2
+}
+
+# prints: net|alias|callsign|modem|hardware
+read_station()
+{
+    (
+        set +o nounset
+        HARDWARE=""
+        . "$1" > /dev/null 2>&1
+        printf '%s|%s|%s|%s|%s\n' "${UUCP_NET}" "${UUCP_ALIAS}" "${CALLSIGN}" "${MODEM_TYPE:-vara}" "${HARDWARE}"
+    )
+}
+
+# prints how Mercury keys the radio: none, hermes_shm, hamlib, serial or
+# cm108. As Mercury reads it: the legacy [main] radio_model (0 is the HERMES
+# shared memory, above 0 a Hamlib model, below 0 none), overridden by an
+# explicit [ptt] method.
+mercury_ptt_method()
+{
+    [ -f "${MERCURY_INI}" ] || { echo none; return 0; }
+    awk -F= '
+        function trim(x) { gsub(/[[:space:]"]/, "", x); return x }
+        /^[[:space:]]*[;#]/ { next }
+        /^[[:space:]]*\[/ { section = trim($0); next }
+        section == "[main]" && trim($1) == "radio_model" && trim($2) != "" {
+            m = trim($2) + 0
+            legacy = (m == 0) ? "hermes_shm" : ((m > 0) ? "hamlib" : "none")
+        }
+        section == "[ptt]" && trim($1) == "method" { explicit = trim($2) }
+        END {
+            if (explicit != "") print explicit
+            else if (legacy != "") print legacy
+            else print "none"
+        }' "${MERCURY_INI}"
+}
+
+# used by the installer: how does Mercury key the radio?
+if [ "${1:-}" = "--mercury-ptt" ]; then
+    mercury_ptt_method
+    exit 0
+fi
+
+pub_key()
+{
+    sed -n "s/^$2:[[:space:]]*//p" "$1" | head -n 1
+}
+
+if [ ! -f "${STATIONS_DIR}/${STATION_NAME}" ]; then
+    warn "station ${STATION_NAME} not found in ${STATIONS_DIR}"
+    exit 1
+fi
+
+IFS='|' read -r MY_NET MY_ALIAS MY_CALLSIGN MY_MODEM MY_HARDWARE <<< "$(read_station "${STATIONS_DIR}/${STATION_NAME}")"
+
+# Mail between the stations of a network goes to them directly, not through
+# the gateway: a remote NNCP station routes each neighbour's domains, from
+# conf/transport.<net> (where they read uucp:<alias>), to nncp:<alias>; the
+# rest goes to gw. Its own domain is never routed. The gateway keeps the
+# whole network's map that email_setup.sh writes. Rebuilt on every mesh run,
+# so the map follows the neighbours, and only where Postfix already uses it.
+POSTFIX_TRANSPORT="${POSTFIX_TRANSPORT:-/etc/postfix/transport}"
+postfix_transport()
+{
+    local role table tmp nd nb
+    role="$( ( . "${STATIONS_DIR}/${STATION_NAME}" > /dev/null 2>&1; echo "${HERMES_ROLE:-}" ) )"
+    if [ "${role}" = "gateway" ] || [ "${MY_ALIAS}" = "${NNCP_GATEWAY_ALIAS}" ]; then
+        return 0
+    fi
+    [ -f "${POSTFIX_TRANSPORT}" ] || return 0
+
+    table="${INSTALLER_DIR}/conf/transport.${MY_NET}"
+    tmp="$(mktemp "${POSTFIX_TRANSPORT}.XXXXXX")"
+    if [ -f "${table}" ]; then
+        for nd in "${NNCP_DIR}"/neigh/*; do
+            nb="$(basename "${nd}")"
+            [ -d "${nd}" ] && [ "${nb}" != "self" ] && [ "${nb}" != "${NNCP_GATEWAY_ALIAS}" ] || continue
+            awk -v nb="${nb}" -v me="${STATION_NAME}" \
+                '$2 == "uucp:" nb && $1 != me { print $1 "\tnncp:" nb }' "${table}" >> "${tmp}"
+        done
+    else
+        warn "no ${table}: no domain routed straight to a neighbour"
+    fi
+    chmod 644 "${tmp}"
+    chown root:root "${tmp}" 2> /dev/null || true
+    mv "${tmp}" "${POSTFIX_TRANSPORT}"
+    if command -v postmap > /dev/null; then
+        postmap "${POSTFIX_TRANSPORT}"
+    fi
+    if systemctl is-active --quiet postfix 2> /dev/null; then
+        postfix reload > /dev/null 2>&1 || true
+    fi
+    echo "NNCP: Postfix sends $(wc -l < "${POSTFIX_TRANSPORT}") domains straight to neighbours"
+}
+
+if [ "${ONLY_POSTFIX_TRANSPORT}" = "true" ]; then
+    postfix_transport
+    exit 0
+fi
+
+# Every station calls every neighbour it has traffic for, twice an hour.  On
+# a shared frequency two stations that call at the same minute collide, so
+# each station calls at its own minute, taken from its callsign.  Written as
+# a range with a step, not "M,M+30": nncp.hjson carries it unquoted, and
+# Hjson reads a comma there as the end of the value.
+if [ -z "${NNCP_CALL_CRON}" ]; then
+    call_minute=$(( $(printf '%s' "${MY_CALLSIGN}" | cksum | cut -d' ' -f1) % 30 ))
+    NNCP_CALL_CRON="${call_minute}-59/30 * * * *"
+fi
+
+# The peers are dialled through our own modem
+if [ "${MY_MODEM}" = "mercury" ]; then
+    HF_SCHEME="mercury"
+else
+    HF_SCHEME="vara"
+fi
+if [ -z "${HF_PTT}" ] && { [ "${MY_HARDWARE}" = "sbitx" ] || [ -f "${RADIO_DAEMON_INI}" ]; }; then
+    HF_PTT="hermes"
+    # Mercury keys the radio itself, by whatever method: keying it from NNCP
+    # too would key it twice
+    if [ "${HF_SCHEME}" = "mercury" ] && [ "$(mercury_ptt_method)" != "none" ]; then
+        HF_PTT="none"
+    fi
+fi
+
+if [ -z "${MY_NET}" ] || [ -z "${MY_ALIAS}" ] || [ -z "${MY_CALLSIGN}" ]; then
+    warn "${STATION_NAME} must define UUCP_NET, UUCP_ALIAS and CALLSIGN"
+    exit 1
+fi
+
+umask 077
+
+# Keys: generate once, never overwrite
+if [ ! -s "${NNCP_DIR}/self/signprv" ]; then
+    echo "Generating NNCP keys for ${STATION_NAME}"
+    tmp_cfg="$(mktemp)"
+    nncp-cfgnew -nocomments > "${tmp_cfg}"
+    nncp-cfgdir -cfg "${tmp_cfg}" -dump "${NNCP_DIR}"
+    rm -f "${tmp_cfg}"
+fi
+
+echo "${NNCP_SPOOL}" > "${NNCP_DIR}/spool"
+echo "${NNCP_SPOOL}/log" > "${NNCP_DIR}/log"
+
+# Postfix and the web API queue as user nncp, the daemon runs as root: what
+# one creates in the spool, the other must be able to write. With the default
+# umask 022 a root nncp-daemon left the spool read-only to the group, and
+# nncp-exec as nncp failed (and hung). 002 keeps received files readable by
+# the API, which reads its inbox as another user.
+echo "${NNCP_UMASK:-002}" > "${NNCP_DIR}/umask"
+if [ "$(id -u)" = "0" ] && [ -d "${NNCP_SPOOL}" ]; then
+    chgrp -R nncp "${NNCP_SPOOL}" 2> /dev/null || true
+    chmod -R g+rwX "${NNCP_SPOOL}"
+    find "${NNCP_SPOOL}" -type d -exec chmod g+s {} +
+fi
+
+# Public keys, for conf/nncp/pub/ in the installer repository
+{
+    echo "# NNCP public keys of ${STATION_NAME} (${MY_CALLSIGN}), network ${MY_NET}"
+    for k in id exchpub signpub noisepub; do
+        echo "${k}: $(cat "${NNCP_DIR}/self/${k}")"
+    done
+} > "${NNCP_DIR}/${STATION_NAME}.pub"
+chmod 644 "${NNCP_DIR}/${STATION_NAME}.pub"
+
+# Station table of our network: file|alias|callsign|modem
+table="$(mktemp)"
+trap 'rm -f "${table}"' EXIT
+for f in "${STATIONS_DIR}"/*; do
+    [ -f "$f" ] || continue
+    IFS='|' read -r net alias callsign modem _ <<< "$(read_station "$f")"
+    [ "${net}" = "${MY_NET}" ] || continue
+    printf '%s|%s|%s|%s\n' "$(basename "$f")" "${alias}" "${callsign}" "${modem}" >> "${table}"
+done
+
+# Drop previously generated neighbours
+mkdir -p "${NNCP_DIR}/neigh"
+for d in "${NNCP_DIR}"/neigh/*; do
+    if [ -f "$d/.hermes-generated" ]; then
+        rm -rf "$d"
+    fi
+done
+
+peers=0
+skipped=0
+while IFS='|' read -r file alias callsign modem; do
+    [ "${file}" != "${STATION_NAME}" ] || continue
+
+    if [ "${alias}" = "self" ] || [ -z "${alias}" ] || [ -z "${callsign}" ]; then
+        warn "skipping ${file}: invalid UUCP_ALIAS or CALLSIGN"
+        skipped=$((skipped + 1))
+        continue
+    fi
+    # Neighbours are named by alias and dialled by callsign: both must be unique
+    if [ "$(cut -d'|' -f2 "${table}" | grep -c -x -F "${alias}")" -gt 1 ]; then
+        warn "skipping ${file}: UUCP_ALIAS ${alias} is used by more than one station in ${MY_NET}"
+        skipped=$((skipped + 1))
+        continue
+    fi
+    if [ "$(cut -d'|' -f3 "${table}" | grep -c -x -F "${callsign}")" -gt 1 ]; then
+        warn "skipping ${file}: CALLSIGN ${callsign} is used by more than one station in ${MY_NET}"
+        skipped=$((skipped + 1))
+        continue
+    fi
+    if [ -d "${NNCP_DIR}/neigh/${alias}" ]; then
+        warn "skipping ${file}: a manually configured neighbour ${alias} exists"
+        skipped=$((skipped + 1))
+        continue
+    fi
+
+    pub="${PUB_DIR}/${file}"
+    if [ ! -f "${pub}" ]; then
+        warn "skipping ${file}: no public keys in ${pub}"
+        skipped=$((skipped + 1))
+        continue
+    fi
+
+    id="$(pub_key "${pub}" id)"
+    exchpub="$(pub_key "${pub}" exchpub)"
+    signpub="$(pub_key "${pub}" signpub)"
+    noisepub="$(pub_key "${pub}" noisepub)"
+    if [ -z "${id}" ] || [ -z "${exchpub}" ] || [ -z "${signpub}" ] || [ -z "${noisepub}" ]; then
+        warn "skipping ${file}: incomplete public keys in ${pub}"
+        skipped=$((skipped + 1))
+        continue
+    fi
+
+    d="${NNCP_DIR}/neigh/${alias}"
+    mkdir -p "${d}/exec" "${d}/addrs"
+    touch "${d}/.hermes-generated"
+    echo "${id}" > "${d}/id"
+    echo "${exchpub}" > "${d}/exchpub"
+    echo "${signpub}" > "${d}/signpub"
+    echo "${noisepub}" > "${d}/noisepub"
+    echo "${NNCP_INCOMING}" > "${d}/incoming"
+    echo "${NNCP_ONLINE_DEADLINE}" > "${d}/onlinedeadline"
+    # Needs our NNCP package (sp-ping-interval); older NNCP ignores the file.
+    echo "${NNCP_PING_INTERVAL}" > "${d}/pinginterval"
+
+    # Skip the ~65 KB padding NNCP puts on the first message of a session to
+    # hide how many packets are queued: at HF rates it costs minutes per call.
+    # Both ends must set it for each other, which the mesh does. Needs our NNCP
+    # package; upstream NNCP ignores the file.
+    touch "${d}/nopad"
+
+    # a station calls a neighbour on a schedule, but only when it has
+    # something to send it: HF airtime is expensive.  Any two stations of
+    # the network talk directly, remote ones included; a gateway is only
+    # needed for what leaves the network.
+    mkdir -p "${d}/calls/0"
+    echo "${NNCP_CALL_CRON}" > "${d}/calls/0/cron"
+    touch "${d}/calls/0/when-tx-exists"
+    echo "1" > "${d}/calls/0/autotoss"
+    echo "${NNCP_ONLINE_DEADLINE}" > "${d}/calls/0/onlinedeadline"
+    for h in ${HF_HANDLERS}; do
+        echo "${h}" > "${d}/exec/${h}"
+    done
+
+    hf="${HF_SCHEME}://${HF_TNC}/${callsign}?mycall=${MY_CALLSIGN}&bw=${HF_BW}"
+    if [ -n "${HF_PTT}" ] && [ "${HF_PTT}" != "none" ]; then
+        hf="${hf}&ptt=${HF_PTT}"
+    fi
+    echo "${hf}" > "${d}/addrs/hf"
+
+    peers=$((peers + 1))
+done < "${table}"
+
+# Encrypted broadcast: one NNCP area per network, so a file can be sent once
+# over the one-way broadcast plane and read by every station of the network.
+# The keypair is a shared secret: the gateway generates it, and the stations
+# receive it over NNCP through the areakey handler. It is never committed.
+AREA_DIR="${NNCP_DIR}/areas/${MY_NET}"
+
+if [ ! -s "${AREA_DIR}/id" ] && [ "${MY_ALIAS}" = "${NNCP_GATEWAY_ALIAS}" ]; then
+    echo "Generating the NNCP broadcast area for ${MY_NET}"
+    mkdir -p "${AREA_DIR}"
+    area_raw="$(nncp-cfgnew -area "${MY_NET}" -nocomments)"
+    for k in id pub prv; do
+        printf '%s\n' "${area_raw}" | sed -n "s/^[[:space:]]*${k}:[[:space:]]*//p" | head -n 1 > "${AREA_DIR}/${k}"
+    done
+    chmod 600 "${AREA_DIR}/prv"
+fi
+
+if [ -s "${AREA_DIR}/id" ]; then
+    echo "${NNCP_INCOMING}" > "${AREA_DIR}/incoming"
+
+    # the stations we relay a broadcast to: every neighbour we know. No file
+    # at all without neighbours: nncp-cfgdir reads an empty one as a single
+    # empty node id and rejects the configuration.
+    subs=""
+    for nd in "${NNCP_DIR}"/neigh/*; do
+        [ -d "${nd}" ] || continue
+        nb="$(basename "${nd}")"
+        [ "${nb}" != "self" ] || continue
+        subs="${subs}${nb}
+"
+    done
+    if [ -n "${subs}" ]; then
+        printf '%s' "${subs}" > "${AREA_DIR}/subs"
+    else
+        rm -f "${AREA_DIR}/subs"
+    fi
+
+    if mkdir -p "${HERMES_ETC}" 2> /dev/null; then
+        echo "${MY_NET}" > "${HERMES_ETC}/nncp-area"
+    else
+        warn "cannot write ${HERMES_ETC}/nncp-area"
+    fi
+fi
+
+# Compile and validate
+tmp_cfg="$(mktemp "${NNCP_CFG}.XXXXXX")"
+if ! nncp-cfgdir -load "${NNCP_DIR}" > "${tmp_cfg}"; then
+    rm -f "${tmp_cfg}"
+    warn "invalid configuration in ${NNCP_DIR}, ${NNCP_CFG} left unchanged"
+    exit 1
+fi
+# Postfix and the web API read it as group nncp; keep that across re-runs
+chmod 640 "${tmp_cfg}"
+chgrp nncp "${tmp_cfg}" 2> /dev/null || chmod 600 "${tmp_cfg}"
+mv "${tmp_cfg}" "${NNCP_CFG}"
+
+postfix_transport
+
+echo "NNCP: ${STATION_NAME} (${MY_ALIAS}, ${MY_CALLSIGN}) in ${MY_NET}: ${peers} neighbours, ${skipped} skipped"
+echo "NNCP: public keys in ${NNCP_DIR}/${STATION_NAME}.pub, commit them as conf/nncp/pub/${STATION_NAME}"

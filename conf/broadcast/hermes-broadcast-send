@@ -1,0 +1,85 @@
+#!/bin/bash
+#
+# hermes-broadcast-send: send a file to everyone in this station's network,
+# encrypted, over Mercury's one-way broadcast plane.
+#
+# A broadcast has no return path, so nothing can be retransmitted on request.
+# The file is encrypted to the network's NNCP area, packed into an NNCP bundle
+# and handed to broadcast_daemon, which repeats it as a RaptorQ carousel: a
+# receiver that tunes in late still decodes it, and a station outside the area
+# hears only ciphertext.
+#
+# Usage: hermes-broadcast-send FILE [AREA]
+
+set -o nounset
+set -o errexit
+
+NNCP_SPOOL="${NNCP_SPOOL:-/var/spool/nncp}"
+TX_DIR="${TX_DIR:-/var/spool/hermes-broadcast/tx}"
+# how many times the carousel repeats the whole file
+CAROUSEL_OVERSHOOT="${CAROUSEL_OVERSHOOT:-2}"
+# RaptorQ symbols needed, see mercury/docs/BROADCAST-NNCP-TRIAL.md
+# RaptorQ symbol size: the broadcast mode's frame size (hermes-broadcast's
+# mercury_modes.h) less 12 bytes of header. It was a fixed 41, so on mode 1
+# (114-byte symbols) every broadcast stayed on the air ~3x longer than planned.
+mode="$(sed -n 's/.*-m[[:space:]]*\([0-9][0-9]*\).*/\1/p' /etc/default/hermes-broadcast 2> /dev/null | head -n 1)"
+frame_sizes=(510 126 14 54 14 3 30 30 14 1180 1213 98)
+frame_size="${frame_sizes[${mode:-1}]:-126}"
+SYMBOL_BYTES="${SYMBOL_BYTES:-$((frame_size - 12))}"
+if [ "${SYMBOL_BYTES}" -lt 1 ]; then
+    echo "$0: broadcast mode ${mode} is too small to carry RaptorQ symbols" >&2
+    exit 1
+fi
+
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 FILE [AREA]" >&2
+    exit 1
+fi
+
+file="$1"
+area="${2:-$(cat /etc/hermes/nncp-area 2> /dev/null || true)}"
+
+if [ ! -s "${file}" ]; then
+    echo "$0: ${file} is missing or empty" >&2
+    exit 1
+fi
+if [ -z "${area}" ]; then
+    echo "$0: no area given and /etc/hermes/nncp-area is empty" >&2
+    exit 1
+fi
+
+# encrypt to the area, then turn the area packet into one packet per subscriber
+# The broadcast is built in a private spool, so it carries this file and
+# nothing else. Bundling from the real spool took every packet queued for the
+# subscribers, and -delete then dropped them: a unicast packet a station missed
+# on the air was lost, since a broadcast is never acknowledged.
+subs_file="${NNCP_DIR:-/etc/nncp}/areas/${area}/subs"
+if [ ! -s "${subs_file}" ]; then
+    echo "$0: no subscribers in ${subs_file}" >&2
+    exit 1
+fi
+mkdir -p "${TX_DIR}"
+spool="$(mktemp -d "$(dirname "${TX_DIR}")/.spool.XXXXXX")"
+bundle="$(mktemp "${TX_DIR}/.bundle.XXXXXX")"
+trap 'rm -rf "${spool}" "${bundle}"' EXIT
+priv="-spool ${spool} -log ${spool}/log"
+
+nncp-file -quiet ${priv} "${file}" "area:${area}:$(basename "${file}")"
+# relays the area packet to every subscriber, inside the private spool
+nncp-toss -quiet ${priv}
+nncp-bundle -tx -delete ${priv} $(tr '\n' ' ' < "${subs_file}") > "${bundle}"
+if [ ! -s "${bundle}" ]; then
+    echo "$0: nothing to broadcast" >&2
+    exit 1
+fi
+bytes="$(stat -c%s "${bundle}")"
+symbols=$(((bytes + SYMBOL_BYTES - 1) / SYMBOL_BYTES + 2))
+frames=$((symbols * CAROUSEL_OVERSHOOT))
+
+# broadcast_daemon reads the frame budget from the name
+target="${TX_DIR}/$(date -u +%Y%m%dT%H%M%SZ)-${area}-${frames}_frames.nncp"
+mv "${bundle}" "${target}"
+rm -rf "${spool}"
+trap - EXIT
+
+echo "$0: ${bytes} B bundle, ${symbols} symbols, ${frames} frames -> ${target}"

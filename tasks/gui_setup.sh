@@ -5,23 +5,6 @@ do_gui_install()
 
     echo -e "${Red}INSTALLING HERMES-GUI${Color_Off}"
 
-    # # Install/load nvm (avoids conflicts with any pre-existing system Node version)
-    # export NVM_DIR="/root/.nvm"
-    # if [ ! -s "${NVM_DIR}/nvm.sh" ]; then
-    #     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-    # fi
-    # \. "${NVM_DIR}/nvm.sh"
-
-    # if [ "${VERSION_ID:-}" = "13" ]; then
-    #     nvm install 20.20.0  # Debian 13 (trixie): Angular 18
-    #     nvm use 20.20.0
-    #     npm install -g npm@11.9.0
-    # else
-    #     nvm install 18.17.1  # Debian 12 (bookworm): Angular 14
-    #     nvm use 18.17.1
-    #     npm install -g npm@10.8.2
-    # fi
-
     mkdir -p ${TMP_PATH}
     cd ${TMP_PATH}
     rm -rf hermes-gui
@@ -49,10 +32,12 @@ do_gui_install()
         echo "HAS_GPS=${HAS_GPS:-false}"
         echo "GPS_MAP=${GPS_MAP:-bangladesh}"
         echo "GATEWAY=$( [ "${HERMES_ROLE}" = "gateway" ] && echo true || echo false )"
-        echo "BITX=$( [ "${HARDWARE}" = "sbitx" ] && echo S || echo U )"
+        echo "BITX=$( [ "${HARDWARE}" = "sbitx" ] || [ "${HARDWARE}" = "hamlib" ] && echo S || echo U )"
         echo "REQUIRE_LOGIN=${REQUIRE_LOGIN}"
         echo "EMERGENCY_EMAIL=${EMERGENCY_EMAIL:-emergency@hermes.radio}"
         echo "LOCALE_ID=${HERMES_LANGUAGE:-en-US}"
+        echo "RADIO_DAEMON=${HERMES_DAEMON:-$( [ "${RADIO_CONTROLLER}" = "radiod" ] && echo true || echo false )}"
+
     } >> .env
 
     npx --yes ts-node setEnv.ts

@@ -1,0 +1,14 @@
+[Unit]
+Description=NNCP daemon
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/nncp-daemon
+ExecStart=/usr/bin/nncp-daemon $NNCP_DAEMON_ARGS
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

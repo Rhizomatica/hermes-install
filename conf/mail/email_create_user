@@ -12,6 +12,12 @@ DOMAIN=$(echo "$1" | cut -f2 -d@);
 ADDRESS=$1;
 PASSWD=$2;
 
+# Mailbox encryption is on when the installer left this marker. The per-mailbox
+# secret below unlocks that user's mail_crypt key; it is deliberately not the
+# login password, so changing the password never loses the mail.
+MAILCRYPT_MARKER=/etc/hermes/mailcrypt
+MAILCRYPT_RECOVERY=/etc/hermes/mail-recovery.pem
+
 if [ -n "$3" ]
 then
     if [ ! -d "$3" ]
@@ -25,6 +31,15 @@ then
     fi
 else
     BASEDIR="$(postconf | grep ^virtual_mailbox_base | cut -f3 -d' ')";
+fi
+
+if [ -f "$BASEDIR/$DOMAIN/passwd" ] && grep -q "^$ADDRESS:" "$BASEDIR/$DOMAIN/passwd"
+then
+    # Creating it again would add a second entry (Dovecot then refuses the
+    # user) and, with mailbox encryption, a new key secret that no longer
+    # opens the mail already stored.
+    echo "User $ADDRESS already exists."
+    exit 3
 fi
 
 if [ -f "/etc/postfix/vmailbox" ] && [ -f "/etc/postfix/virtual_alias" ] && [ -d "$BASEDIR/$DOMAIN/" ]
@@ -42,14 +57,60 @@ then
     if [ $? -eq 0 ]
     then
 	    echo "Adding Dovecot user configuration..."
-	    echo $ADDRESS::5000:5000::$BASEDIR/$DOMAIN/$ADDRESS>> $BASEDIR/$DOMAIN/passwd
+	    if [ -f "$MAILCRYPT_MARKER" ]
+	    then
+	        # user:password:uid:gid:gecos:home:shell:extra_fields
+	        CRYPT_SECRET=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)
+	        echo $ADDRESS::5000:5000::$BASEDIR/$DOMAIN/$ADDRESS::userdb_crypt_user_key_password=$CRYPT_SECRET >> $BASEDIR/$DOMAIN/passwd
+	    else
+	        echo $ADDRESS::5000:5000::$BASEDIR/$DOMAIN/$ADDRESS>> $BASEDIR/$DOMAIN/passwd
+	    fi
 	    echo $ADDRESS":"$(doveadm pw -p $PASSWD) >> $BASEDIR/$DOMAIN/shadow
-	    chown vmail:vmail $BASEDIR/$DOMAIN/passwd && chmod 775 $BASEDIR/$DOMAIN/passwd
-	    chown vmail:vmail $BASEDIR/$DOMAIN/shadow && chmod 775 $BASEDIR/$DOMAIN/shadow
+	    # hashes and mailbox key secrets: readable by Dovecot's auth
+	    # process (user dovecot) and nobody else
+	    chown vmail:dovecot $BASEDIR/$DOMAIN/passwd && chmod 640 $BASEDIR/$DOMAIN/passwd
+	    chown vmail:dovecot $BASEDIR/$DOMAIN/shadow && chmod 640 $BASEDIR/$DOMAIN/shadow
     fi
 
     systemctl restart postfix
     systemctl restart dovecot
+
+    if [ -f "$MAILCRYPT_MARKER" ] && [ -n "$CRYPT_SECRET" ]
+    then
+        echo "Generating the mailbox encryption key..."
+        # </dev/null: doveadm asks for the password on the terminal if it is
+        # not happy with -o, and would otherwise hang the installer
+        doveadm -o crypt_user_key_password="$CRYPT_SECRET" mailbox cryptokey generate -u "$ADDRESS" -UR < /dev/null
+
+        # Recovery copy, encrypted to the administrator's certificate, so that a
+        # lost station secret does not mean lost mail. Without a certificate we
+        # say so rather than pretending there is a way back.
+        if [ -s "$MAILCRYPT_RECOVERY" ]
+        then
+            KEYDIR="$BASEDIR/$DOMAIN/keybackup"
+            mkdir -p "$KEYDIR"
+            chown vmail:vmail "$KEYDIR"
+            chmod 700 "$KEYDIR"
+
+            # doveadm prints "Folder/Public ID/Error" lines before the key, so
+            # keep only the PEM block
+            doveadm -o crypt_user_key_password="$CRYPT_SECRET" mailbox cryptokey export -u "$ADDRESS" -U < /dev/null \
+                | sed -n '/-----BEGIN/,/-----END/p' \
+                | openssl smime -encrypt -aes256 -binary -outform DER \
+                    -out "$KEYDIR/$ADDRESS.key.enc" "$MAILCRYPT_RECOVERY"
+
+            if [ -s "$KEYDIR/$ADDRESS.key.enc" ]
+            then
+                chmod 600 "$KEYDIR/$ADDRESS.key.enc"
+                echo "Recovery copy: $KEYDIR/$ADDRESS.key.enc"
+            else
+                rm -f "$KEYDIR/$ADDRESS.key.enc"
+                echo "WARNING: could not write a recovery copy of the mailbox key for $ADDRESS"
+            fi
+        else
+            echo "No $MAILCRYPT_RECOVERY: no recovery copy of this mailbox key was made."
+        fi
+    fi
 
     exit 0
 else

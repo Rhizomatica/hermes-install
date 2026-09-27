@@ -60,6 +60,7 @@ postfix \
 dovecot-core \
 dovecot-pop3d \
 dovecot-imapd \
+dovecot-lmtpd \
 libiniparser-dev \
 composer \
 libgtk-3-dev \
@@ -123,13 +124,13 @@ do_system_setup()
         install -C -g root -o root -m 755 conf/config.txt /boot/firmware/config.txt
 
         if [[ "$DISPLAY_TYPE" == "v1" ]]; then
-            echo "${Red}Setting Display Type v1...${Color_Off}"
+            echo -e "${Red}Setting Display Type v1...${Color_Off}"
             # do nothing
         elif [[ "$DISPLAY_TYPE" == "v2" ]]; then
-            echo "${Red}Setting Display Type v2...${Color_Off}"
+            echo -e "${Red}Setting Display Type v2...${Color_Off}"
             echo "dtoverlay=vc4-kms-dsi-ili9881-7inch,rotation=270,swapxy,invy" >> /boot/firmware/config.txt
         else
-            echo "${Red}Unknown DISPLAY_TYPE: $DISPLAY_TYPE${Color_Off}"
+            echo -e "${Red}Unknown DISPLAY_TYPE: $DISPLAY_TYPE${Color_Off}"
             exit 1
         fi
 
@@ -250,8 +251,32 @@ do_system_setup()
             set -e
         fi
 
-        echo -e "${Red}SUDOERS NOPASSWD${Color_Off}"
-        sed -i '/%sudo/c\%sudo ALL=(ALL) NOPASSWD: ALL' /etc/sudoers
+        if [ "${HERMES_HARDENING}" = "true" ]; then
+            echo -e "${Red}SUDOERS: scoped policy for the web API${Color_Off}"
+            install -C -g root -o root -m 440 conf/sudoers.d/hermes /etc/sudoers.d/hermes
+            if command -v visudo > /dev/null; then
+                visudo -c -f /etc/sudoers.d/hermes
+            fi
+            # undo the NOPASSWD line an earlier install may have left
+            sed -i '/^%sudo/c\%sudo ALL=(ALL:ALL) ALL' /etc/sudoers
+        else
+            echo -e "${Red}SUDOERS NOPASSWD${Color_Off}"
+            sed -i '/%sudo/c\%sudo ALL=(ALL) NOPASSWD: ALL' /etc/sudoers
+        fi
+
+        # only harden sshd when we ship keys, otherwise the station locks us out
+        if [ "${HERMES_HARDENING}" = "true" ] && [ -s conf/ssh/authorized_keys ]; then
+            echo -e "${Red}SSH: key-only access${Color_Off}"
+            mkdir -p /etc/ssh/sshd_config.d
+            install -C -g root -o root -m 644 conf/ssh/hermes.conf /etc/ssh/sshd_config.d/hermes.conf
+            for admin_home in /root /home/pi; do
+                mkdir -p "${admin_home}/.ssh"
+                install -C -m 600 conf/ssh/authorized_keys "${admin_home}/.ssh/authorized_keys"
+            done
+            chown -R pi:pi /home/pi/.ssh
+        else
+            echo -e "${Red}SSH: password login stays enabled${Color_Off}"
+        fi
 
         echo -e "${Red}Enable ssh server${Color_Off}"
         systemctl enable ssh
@@ -263,7 +288,7 @@ do_system_setup()
         set +e
         echo -e "${Red}Creating (or trying to) pi user${Color_Off}"
         useradd -s /bin/bash -m -G sudo,video,adm,dialout,cdrom,audio,plugdev,games,users,input,render,netdev,spi,gpio,i2c,ssl-cert pi
-        echo "pi:hermes" | chpasswd
+        echo "pi:${PI_PASSWORD}" | chpasswd
         set -e
 
         usermod -a -G sudo,video,adm,dialout,cdrom,audio,plugdev,games,users,input,render,netdev,spi,gpio,i2c,ssl-cert pi
@@ -384,8 +409,32 @@ do_system_setup()
         echo -e "${Red}INSTALLING NESC${Color_Off}"
         dpkg -i conf/packages/nesc_0.2-2_amd64.deb
 
-        echo -e "${Red}SUDOERS NOPASSWD${Color_Off}"
-        sed -i '/%sudo/c\%sudo ALL=(ALL) NOPASSWD: ALL' /etc/sudoers
+        if [ "${HERMES_HARDENING}" = "true" ]; then
+            echo -e "${Red}SUDOERS: scoped policy for the web API${Color_Off}"
+            install -C -g root -o root -m 440 conf/sudoers.d/hermes /etc/sudoers.d/hermes
+            if command -v visudo > /dev/null; then
+                visudo -c -f /etc/sudoers.d/hermes
+            fi
+            # undo the NOPASSWD line an earlier install may have left
+            sed -i '/^%sudo/c\%sudo ALL=(ALL:ALL) ALL' /etc/sudoers
+        else
+            echo -e "${Red}SUDOERS NOPASSWD${Color_Off}"
+            sed -i '/%sudo/c\%sudo ALL=(ALL) NOPASSWD: ALL' /etc/sudoers
+        fi
+
+        # only harden sshd when we ship keys, otherwise the station locks us out
+        if [ "${HERMES_HARDENING}" = "true" ] && [ -s conf/ssh/authorized_keys ]; then
+            echo -e "${Red}SSH: key-only access${Color_Off}"
+            mkdir -p /etc/ssh/sshd_config.d
+            install -C -g root -o root -m 644 conf/ssh/hermes.conf /etc/ssh/sshd_config.d/hermes.conf
+            for admin_home in /root /home/pi; do
+                mkdir -p "${admin_home}/.ssh"
+                install -C -m 600 conf/ssh/authorized_keys "${admin_home}/.ssh/authorized_keys"
+            done
+            chown -R pi:pi /home/pi/.ssh
+        else
+            echo -e "${Red}SSH: password login stays enabled${Color_Off}"
+        fi
 
         echo -e "${Red}www-data and uucp to sudo group${Color_Off}"
         usermod -a -G sudo www-data

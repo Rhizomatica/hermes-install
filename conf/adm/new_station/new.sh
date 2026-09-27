@@ -229,7 +229,7 @@ time any
 
 chat-timeout 600
 call-login user
-call-password pass
+call-password change-me
 chat "" \r
 
 port HFP
@@ -252,7 +252,7 @@ time any
 
 chat-timeout 600
 call-login user
-call-password pass
+call-password change-me
 chat "" \r
 
 port HFP

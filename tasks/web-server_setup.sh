@@ -20,6 +20,13 @@ do_webserver_setup()
         sed -i "s/HERMESLANGNGINX/${HERMES_LANGUAGE}/g" /etc/nginx/sites-available/hermes.conf
     fi
 
+    # Without HERMES_HARDENING: no cipher restriction and no HSTS/CSP headers,
+    # as on the stations already deployed. HSTS in particular would make a
+    # browser refuse the station for months once its certificate changes.
+    if [ "${HERMES_HARDENING}" != "true" ]; then
+        sed -i '/# BEGIN HERMES_HARDENING/,/# END HERMES_HARDENING/d' /etc/nginx/sites-available/hermes.conf
+    fi
+
     ln -sf /etc/nginx/sites-available/hermes.conf /etc/nginx/sites-enabled/01-hermes.conf
 
     rm -f /etc/nginx/sites-enabled/default

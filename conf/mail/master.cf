@@ -117,6 +117,14 @@ uucp      unix  -       n       n       -       -       pipe
 uucpmx      unix  -       n       n       -       -       pipe
   flags=Fqhu user=uucp argv=uux -r -n -z -a$sender - $nexthop!rmail ($recipient)
 
+# NNCP transport (encrypted), with HERMES compression system
+nncp      unix  -       n       n       -       -       pipe
+  flags=Fqhu user=nncp argv=uuxcomp -T nncp -r -n -z -a$sender - $nexthop!crmail ($recipient)
+
+# clean NNCP, without HERMES compression system
+nncpmx      unix  -       n       n       -       -       pipe
+  flags=Fqhu user=nncp argv=nncp-exec -quiet $nexthop rmail ($recipient)
+
 #
 # Other external delivery methods.
 #
