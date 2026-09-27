@@ -16,9 +16,9 @@ do_api_setup()
     if [ "${NNCP_ENABLED:-false}" = "true" ]; then
         git fetch
         git checkout "${HERMES_API_BRANCH:-nncp-transport}"
-    elif [ ${HERMES_PRODUCTION} = "false" ]; then
+    elif [ -n "${HERMES_API_BRANCH:-}" ]; then
         git fetch
-        git checkout development
+        git checkout "${HERMES_API_BRANCH}"
     fi
 
     echo "APP_NAME=hermes-api" > .env

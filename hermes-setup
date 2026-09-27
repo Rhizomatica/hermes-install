@@ -238,21 +238,19 @@ station_edit()
     fi
 
     # options
-    local on_gps=off on_login=off on_prod=off on_hard=off on_crypt=off on_voice=off options
+    local on_gps=off on_login=off on_hard=off on_crypt=off on_voice=off options
     [ "${HAS_GPS}" = "true" ] && on_gps=on
     [ "${REQUIRE_LOGIN}" = "true" ] && on_login=on
-    [ "${HERMES_PRODUCTION}" = "true" ] && on_prod=on
     [ "${HERMES_HARDENING}" = "true" ] && on_hard=on
     [ "${MAIL_ENCRYPTION}" = "true" ] && on_crypt=on
     [ "${DEFAULT_VOICE}" = "true" ] && on_voice=on
     options="$(d --title "Options" --separate-output --checklist "Station options." 0 0 0 \
         HAS_GPS           "A GPS is connected"                               "${on_gps}" \
         REQUIRE_LOGIN     "The web interface asks for a login"               "${on_login}" \
-        HERMES_PRODUCTION "Production (unchecked: development branches)"     "${on_prod}" \
         HERMES_HARDENING  "Hardening: random passwords, own certificate..."  "${on_hard}" \
         MAIL_ENCRYPTION   "Encrypted mailboxes"                              "${on_crypt}" \
         DEFAULT_VOICE     "Start in the voice profile"                       "${on_voice}")" || return 1
-    for answer in HAS_GPS REQUIRE_LOGIN HERMES_PRODUCTION HERMES_HARDENING MAIL_ENCRYPTION DEFAULT_VOICE; do
+    for answer in HAS_GPS REQUIRE_LOGIN HERMES_HARDENING MAIL_ENCRYPTION DEFAULT_VOICE; do
         if echo "${options}" | grep -qx "${answer}"; then
             printf -v "${answer}" '%s' true
         else
