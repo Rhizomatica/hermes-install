@@ -22,7 +22,15 @@ do_network_setup()
     systemctl enable dnsmasq
 
     echo -e "${Red}SET HOSTAPD CONF${Color_Off}"
-    install -C -g root -o root -m 600 conf/hostapd.conf /etc/hostapd/hostapd.conf
+    # The web interface reads hostapd.conf (GET /api/wifi runs as www-data):
+    # world-readable as it always was, and with HERMES_HARDENING readable by
+    # www-data only, since it holds the WiFi passphrase.  (Mode 600 broke the
+    # WiFi settings page on every station installed since 2026-09-16.)
+    if [ "${HERMES_HARDENING}" = "true" ]; then
+        install -C -g www-data -o root -m 640 conf/hostapd.conf /etc/hostapd/hostapd.conf
+    else
+        install -C -g root -o root -m 644 conf/hostapd.conf /etc/hostapd/hostapd.conf
+    fi
     install -C -g root -o root -m 644 conf/hostapd.conf.head /etc/hostapd/hostapd.conf.head
     touch /etc/hostapd/accept
 
