@@ -1,0 +1,6 @@
+[Unit]
+Description=Renew this station's TLS certificate
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hermes-tls-renew

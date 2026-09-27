@@ -1,0 +1,14 @@
+[Unit]
+Description=HERMES broadcast carousel over Mercury
+After=network.target modem.service
+Wants=modem.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/hermes-broadcast
+ExecStart=/usr/bin/broadcast_daemon $BROADCAST_DAEMON_ARGS
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

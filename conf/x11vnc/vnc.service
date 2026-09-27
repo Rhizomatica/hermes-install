@@ -8,7 +8,9 @@ Type=exec
 User=root
 Group=root
 WorkingDirectory=/root
-ExecStart=x11vnc -display WAIT:69 -forever -usepw -quiet -listen 0.0.0.0 -xkb -auth /root/.Xauthority
+# localhost only: reach it through an SSH tunnel
+#   ssh -L 5900:127.0.0.1:5900 pi@station
+ExecStart=x11vnc -display WAIT:69 -forever -usepw -quiet -listen 127.0.0.1 -xkb -auth /root/.Xauthority
 KillSignal=SIGKILL
 
 [Install]

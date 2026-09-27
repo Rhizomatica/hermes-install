@@ -11,14 +11,19 @@ do_api_setup()
     git clone https://github.com/Rhizomatica/hermes-api
     cd hermes-api/
 
-    if [ ${HERMES_PRODUCTION} = "false" ]; then
+    # NNCP stations need the API that speaks NNCP (the uucp tools are not
+    # installed there)
+    if [ "${NNCP_ENABLED:-false}" = "true" ]; then
+        git fetch
+        git checkout "${HERMES_API_BRANCH:-nncp-transport}"
+    elif [ ${HERMES_PRODUCTION} = "false" ]; then
         git fetch
         git checkout development
     fi
 
     echo "APP_NAME=hermes-api" > .env
     echo "APP_ENV=local" >> .env
-    echo "APP_KEY=$(date | openssl passwd -6 -stdin)" >> .env
+    echo "APP_KEY=${API_APP_KEY}" >> .env
     echo "APP_DEBUG=true" >> .env
     echo "APP_URL=http://localhost" >> .env
     echo "APP_TIMEZONE=${TIMEZONE}" >> .env
@@ -41,7 +46,8 @@ do_api_setup()
     echo "HERMES_MAX_FILE=20480" >> .env
     echo "HERMES_MAX_SPOOL=71680" >> .env
 
-    if [ "${HARDWARE}" = "sbitx" ]; then
+    # hermes-radio-daemon links sbitx_client to its radio_client
+    if [ "${HARDWARE}" = "sbitx" ] || [ "${HARDWARE}" = "hamlib" ]; then
         echo "HERMES_TOOL=/usr/bin/sbitx_client" >> .env
     else
         echo "HERMES_TOOL=/usr/bin/ubitx_client" >> .env
@@ -59,8 +65,24 @@ do_api_setup()
         echo "HERMES_GATEWAY=false" >> .env
         echo 'HERMES_ROUTE=gw!hermes' >> .env
     fi
-    echo "HERMES_UUCP=/var/spool/uucp/" >> .env
+    # radio transport: nncp (encrypted) or uucp
+    if [ "${NNCP_ENABLED:-false}" = "true" ]; then
+        echo "HERMES_TRANSPORT=nncp" >> .env
+        echo "HERMES_UUCP=/var/spool/nncp/" >> .env
+    else
+        echo "HERMES_TRANSPORT=uucp" >> .env
+        echo "HERMES_UUCP=/var/spool/uucp/" >> .env
+    fi
     echo "HERMES_UUCP_IN=${INBOX_PATH}" >> .env
+
+    # The pre-agreed UUCP startup (uucico -Y) on the calls the API starts over
+    # the air, as caller.sh does on a gateway: the API adds it only to calls
+    # to HF stations, never to the gateway's TCP link to the central server.
+    # Same conditions as UUCICO_HF_OPTS in hermes-net_setup.
+    if [ "${NNCP_ENABLED:-false}" != "true" ] && [ "${UUCP_PRE_AGREED}" = "true" ] \
+       && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' uucp 2> /dev/null)" ge 1.07-37; then
+        echo "HERMES_UUCICO_HF_OPTS=-Y" >> .env
+    fi
 
     if [ -z "${HERMES_FWD_EMAIL:-}" ]; then
         echo "HERMES_FWD_EMAIL=todos@${HERMES_HOSTNAME}" >> .env
@@ -71,7 +93,7 @@ do_api_setup()
     echo "MAIL_HOST=localhost" >> .env
     echo "MAIL_PORT=25" >> .env  # 25,465,587
     echo "MAIL_USERNAME=root@${HERMES_HOSTNAME}" >> .env
-    echo "MAIL_PASSWORD=caduceu" >> .env
+    echo "MAIL_PASSWORD=${MAIL_ROOT_PASSWORD}" >> .env
     echo "MAIL_ENCRYPTION=null" >> .env
     echo "MAIL_FROM_ADDRESS=root@${HERMES_HOSTNAME}" >> .env
     echo "MAIL_FROM_NAME=\"HERMES SYSTEM ${HERMES_HOSTNAME}\"" >> .env

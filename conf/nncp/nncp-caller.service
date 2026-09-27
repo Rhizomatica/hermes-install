@@ -1,0 +1,14 @@
+[Unit]
+Description=NNCP caller (scheduled calls to the gateway)
+After=network.target nncp-daemon.service
+Wants=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/nncp-daemon
+ExecStart=/usr/bin/nncp-caller $NNCP_CALLER_ARGS
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

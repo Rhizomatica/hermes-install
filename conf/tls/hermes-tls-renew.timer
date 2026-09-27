@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew this station's TLS certificate before it expires
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

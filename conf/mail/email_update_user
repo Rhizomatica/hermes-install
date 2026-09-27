@@ -32,7 +32,7 @@ then
     echo "Updating Dovecot user password..."
 
     sed -i "/$ADDRESS/c$ADDRESS:$(doveadm pw -p $PASSWD)" $BASEDIR/$DOMAIN/shadow
-    chown vmail:vmail $BASEDIR/$DOMAIN/shadow && chmod 775 $BASEDIR/$DOMAIN/shadow
+    chown vmail:dovecot $BASEDIR/$DOMAIN/shadow && chmod 640 $BASEDIR/$DOMAIN/shadow
 
     systemctl restart postfix
     systemctl restart dovecot

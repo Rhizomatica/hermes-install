@@ -1,0 +1,35 @@
+# HERMES: what the web API (www-data) may run as root.
+#
+# This replaces "%sudo ALL=(ALL) NOPASSWD: ALL", which gave every member of
+# the sudo group password-less root.
+#
+# NOTE: sh, sed, cp, rm, mkdir, touch and truncate below are still
+# root-equivalent in practice. They are listed because the API calls them
+# today; tightening them needs the API to stop shelling out for file edits
+# (hostapd.conf, sensor files). Keep this list short.
+
+# an admin's "sudo nncp-call" keeps the HF deadline from /etc/profile.d/nncp.sh
+Defaults env_keep += "NNCPDEADLINE"
+
+Cmnd_Alias HERMES_TRANSPORT = /usr/local/sbin/hermes-nncp-call, \
+                              /usr/bin/nncp-call, /usr/bin/nncp-log, \
+                              /usr/bin/nncp-rm, /usr/bin/nncp-stat, \
+                              /usr/bin/uustat, /usr/sbin/uucico, /usr/bin/uulog
+
+Cmnd_Alias HERMES_MAIL = /usr/bin/email_create_user, /usr/bin/email_delete_user, \
+                         /usr/bin/email_update_user, /usr/bin/mailkill.sh
+
+# sudo matches the path it resolves through secure_path: on Debian that is
+# /usr/sbin/reboot and /usr/sbin/halt. The /sbin spellings are kept for
+# systems where those are not symlinks into /usr.
+Cmnd_Alias HERMES_POWER = /usr/sbin/reboot, /usr/sbin/halt, /sbin/reboot, \
+                          /sbin/halt, /usr/bin/systemctl
+
+Cmnd_Alias HERMES_RADIO = /usr/bin/alsatonic, /usr/bin/killall
+
+Cmnd_Alias HERMES_FILES = /usr/bin/cat, /usr/bin/tail, /usr/bin/cp, /usr/bin/rm, \
+                          /usr/bin/mkdir, /usr/bin/touch, /usr/bin/truncate, \
+                          /usr/bin/sed, /usr/bin/sh, /usr/bin/xzcat, /usr/bin/zip
+
+www-data ALL=(root) NOPASSWD: HERMES_TRANSPORT, HERMES_MAIL, HERMES_POWER, \
+                              HERMES_RADIO, HERMES_FILES

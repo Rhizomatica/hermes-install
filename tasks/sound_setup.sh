@@ -3,8 +3,10 @@
 do_sound_setup()
 {
 
-    if [ ${HARDWARE} = "sbitx" ]; then
-        echo -e "${Red}SETTING UP ALSA FOR SBITX-BASED HERMES${Color_Off}"
+    # The radio controller bridges the radio's codec (the sBitx's own, or a
+    # Hamlib rig's USB one) to snd-aloop cards, which the modem uses.
+    if [ "${HARDWARE}" = "sbitx" ] || [ "${HARDWARE}" = "hamlib" ]; then
+        echo -e "${Red}SETTING UP ALSA FOR ${HARDWARE}-BASED HERMES${Color_Off}"
 # done from hermes-net
 #        install -C -g root -o root -m 644 conf/asound-sbitx.conf /etc/asound.conf
         echo snd-aloop > /etc/modules

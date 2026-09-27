@@ -22,9 +22,24 @@ do_network_setup()
     systemctl enable dnsmasq
 
     echo -e "${Red}SET HOSTAPD CONF${Color_Off}"
-    install -C -g root -o root -m 644 conf/hostapd.conf /etc/hostapd/hostapd.conf
+    install -C -g root -o root -m 600 conf/hostapd.conf /etc/hostapd/hostapd.conf
     install -C -g root -o root -m 644 conf/hostapd.conf.head /etc/hostapd/hostapd.conf.head
     touch /etc/hostapd/accept
+
+    # Without HERMES_HARDENING, the WiFi of the stations already deployed:
+    # WPA and WPA2 with TKIP, which the older phones in the field may need.
+    if [ "${HERMES_HARDENING}" != "true" ]; then
+        for f in /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.head; do
+            sed -i -e 's/^wpa=2$/wpa=3/' \
+                   -e 's/^wpa_key_mgmt=WPA-PSK SAE$/wpa_key_mgmt=WPA-PSK\nwpa_pairwise=TKIP/' \
+                   -e '/^ieee80211w=1$/d' -e '/^# WPA3-SAE where/d' "${f}"
+        done
+    fi
+
+    # this station's own WiFi passphrase, from /etc/hermes/secrets
+    if [ -n "${WIFI_PASSPHRASE:-}" ]; then
+        sed -i "s/WIFI_PASSPHRASE/${WIFI_PASSPHRASE}/" /etc/hostapd/hostapd.conf
+    fi
 
     systemctl unmask hostapd
     systemctl enable hostapd

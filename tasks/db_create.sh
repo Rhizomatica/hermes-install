@@ -1,4 +1,11 @@
 
+# The HERMES and Roundcube databases.  Created on the first install; a
+# reinstall keeps them and only applies the API's new migrations.  This used
+# to drop both databases whenever the hermes one existed, without creating
+# them again, so every other run of the installer left the API and the
+# webmail without a database.  To start over on purpose, set
+# HERMES_ERASE_DB="true" (in the environment or the station file).
+
 db_create()
 {
     if [ "${virtual_env}" == "true" ]; then
@@ -10,48 +17,48 @@ db_create()
         sleep 5
     fi
 
-    echo -e "${Red}INITIAL SQL SETUP AND DB SEED (FOR HERMES)${Color_Off}"
-    DB_EXISTS=$(mysql -e "SHOW DATABASES LIKE 'hermes';" | grep "hermes" | wc -l)
-    if [ "${DB_EXISTS}" -ge 1 ]; then
-        echo -e "${Red}Database hermes already exists...${Color_Off}"
-        echo -e "${Red}Deleting all DBs and re-installing...${Color_Off}"
-        set +e
+    if [ "${HERMES_ERASE_DB:-false}" = "true" ]; then
+        echo -e "${Red}HERMES_ERASE_DB: deleting the HERMES and Roundcube databases${Color_Off}"
+        erase_db_setup
+    fi
 
-        echo "DROP USER roundcube; " > sql_commands.sql
-        echo "DROP DATABASE roundcubemail;" >> sql_commands.sql
+    echo -e "${Red}SQL SETUP (FOR HERMES)${Color_Off}"
+    # by their tables, not by the databases: a run that stopped half way
+    # can leave a database without them
+    local hermes_tables roundcube_tables
+    hermes_tables=$(mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='hermes';")
+    roundcube_tables=$(mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='roundcubemail';")
 
-        mysql < sql_commands.sql
+    # The users are (re)set on every run, so that they match the passwords in
+    # /etc/hermes/secrets that the API and Roundcube configurations get.
+    mysql << EOF
+CREATE DATABASE IF NOT EXISTS hermes;
+CREATE USER IF NOT EXISTS hermes IDENTIFIED BY '${HERMES_DB_PASSWORD}';
+ALTER USER hermes IDENTIFIED BY '${HERMES_DB_PASSWORD}';
+GRANT ALL PRIVILEGES ON hermes.* TO hermes;
+CREATE DATABASE IF NOT EXISTS roundcubemail;
+CREATE USER IF NOT EXISTS roundcube IDENTIFIED BY '${ROUNDCUBE_DB_PASSWORD}';
+ALTER USER roundcube IDENTIFIED BY '${ROUNDCUBE_DB_PASSWORD}';
+GRANT ALL PRIVILEGES ON roundcubemail.* TO roundcube;
+EOF
 
-        echo "DROP USER hermes; " > sql_commands.sql
-        echo "DROP DATABASE hermes;" >> sql_commands.sql
+    # an empty database gets its tables and seed; an existing one only the
+    # migrations it does not have yet
+    cd /var/www/station-api/
+    php artisan migrate --force
+    if [ "${hermes_tables}" -eq 0 ]; then
+        echo -e "${Red}New HERMES database: seeding it${Color_Off}"
+        php artisan db:seed --force
+    fi
+    cd "${INSTALLER_DIRECTORY}"
 
-        mysql < sql_commands.sql
-        rm -f sql_commands.sql
-        set -e
-    else
-        echo "CREATE USER hermes IDENTIFIED BY 'db_hermes'; " > sql_commands.sql
-        echo "CREATE DATABASE hermes;" >> sql_commands.sql
-        echo "GRANT ALL PRIVILEGES ON hermes.* TO hermes;" >> sql_commands.sql
-
-        mysql < sql_commands.sql
-
-        cd /var/www/station-api/
-
-        php artisan migrate
-        php artisan db:seed
-
-        cd -
-
-        echo -e "${Red}ROUNDCUBE SQL SETUP${Color_Off}"
-
-        echo "CREATE USER roundcube IDENTIFIED BY 'Cm3cmal'; " > sql_commands.sql
-        echo "CREATE DATABASE roundcubemail;" >> sql_commands.sql
-        echo "GRANT ALL PRIVILEGES ON roundcubemail.* TO roundcube;" >> sql_commands.sql
-
-        mysql < sql_commands.sql
-        rm -f sql_commands.sql
-
-        mysql roundcubemail < /var/www/html/mail/SQL/mysql.initial.sql
+    if [ "${roundcube_tables}" -eq 0 ]; then
+        if [ -f /var/www/html/mail/SQL/mysql.initial.sql ]; then
+            echo -e "${Red}ROUNDCUBE SQL SETUP${Color_Off}"
+            mysql roundcubemail < /var/www/html/mail/SQL/mysql.initial.sql
+        else
+            echo -e "${Red}Roundcube is not installed: its database stays empty (run with FIRST_INSTALL=\"true\")${Color_Off}"
+        fi
     fi
 
     if [ "${virtual_env}" == "true" ]; then

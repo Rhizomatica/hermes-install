@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""hermes-voice-key: derive the voice encryption key from the station's NNCP keys.
+
+The station's NNCP keys, generated on the station and never leaving it, are
+the one root of trust; the voice key is derived from them, so there is nothing
+new to generate, distribute or back up. The radio daemon reads the result from
+/etc/hermes/voice.key (32 raw bytes, mode 0600).
+
+  hermes-voice-key pair PEER     key for a call with one neighbour
+  hermes-voice-key group [AREA]  key shared by the whole network
+  hermes-voice-key show          fingerprint of the installed key
+
+pair:  HKDF-SHA256(X25519(our exchprv, PEER's exchpub),
+                   info = "hermes-voice-v1" || both NNCP node ids,
+                   the ids as raw 32-byte values sorted bytewise)
+       Both stations of a pair derive the same key, and no third station can.
+
+group: HKDF-SHA256(the network's NNCP area private key,
+                   info = "hermes-voice-group-v1" || area id)
+       Every station holding the area key (sent by the gateway over NNCP with
+       the areakey handler) derives the same key.
+
+After writing the key, the radio daemon is pointed at it (voice_key_file in
+the [main] section of /etc/hermes/core.ini) and asked to reload it over its
+websocket, when that is enabled. The daemon answers with the fingerprint of
+the key it loaded, which is compared with ours.
+
+Switch keys between overs, not during one: the daemon applies a new key to
+reception at once, so an over in progress under the old key goes quiet.
+
+Compare fingerprints between two stations to check they hold the same key;
+the fingerprint does not reveal the key.
+"""
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import socket
+import ssl
+import sys
+import tempfile
+import time
+import urllib.parse
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric.x25519 import (
+    X25519PrivateKey,
+    X25519PublicKey,
+)
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+PAIR_LABEL = b"hermes-voice-v1"
+GROUP_LABEL = b"hermes-voice-group-v1"
+KEY_LEN = 32
+
+
+def b32(text):
+    """Decode an NNCP key: RFC 4648 base32, upper case, no padding."""
+    text = text.strip()
+    return base64.b32decode(text + "=" * (-len(text) % 8))
+
+
+def read_key(path, size=32):
+    try:
+        with open(path) as f:
+            raw = b32(f.read())
+    except FileNotFoundError:
+        sys.exit(f"hermes-voice-key: {path} not found")
+    if len(raw) != size:
+        sys.exit(f"hermes-voice-key: {path} is {len(raw)} bytes, expected {size}")
+    return raw
+
+
+def hkdf(ikm, info):
+    return HKDF(algorithm=hashes.SHA256(), length=KEY_LEN, salt=None, info=info).derive(ikm)
+
+
+def pair_key(nncp_dir, peer):
+    peer_dir = os.path.join(nncp_dir, "neigh", peer)
+    if peer == "self" or not os.path.isdir(peer_dir):
+        sys.exit(f"hermes-voice-key: no neighbour {peer!r} in {nncp_dir}/neigh")
+
+    our_prv = X25519PrivateKey.from_private_bytes(read_key(os.path.join(nncp_dir, "self", "exchprv")))
+    their_pub = X25519PublicKey.from_public_bytes(read_key(os.path.join(peer_dir, "exchpub")))
+    shared = our_prv.exchange(their_pub)
+
+    ids = sorted([read_key(os.path.join(nncp_dir, "self", "id")),
+                  read_key(os.path.join(peer_dir, "id"))])
+    return hkdf(shared, PAIR_LABEL + ids[0] + ids[1])
+
+
+def group_key(nncp_dir, area):
+    area_dir = os.path.join(nncp_dir, "areas", area)
+    if not os.path.isdir(area_dir):
+        sys.exit(f"hermes-voice-key: no area {area!r} in {nncp_dir}/areas "
+                 "(the gateway sends it with hermes-nncp-area-export)")
+    prv = read_key(os.path.join(area_dir, "prv"))
+    area_id = read_key(os.path.join(area_dir, "id"))
+    return hkdf(prv, GROUP_LABEL + area_id)
+
+
+def fingerprint(key):
+    return hashlib.sha256(b"hermes-voice-fingerprint" + key).hexdigest()[:16]
+
+
+def write_atomic(path, data, mode):
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix="." + os.path.basename(path) + ".")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            os.fchmod(f.fileno(), mode)
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+# --- the radio daemon's configuration -----------------------------------------
+
+def ini_value(raw):
+    """A value as iniparser reads it: quotes removed, or an inline ; or #
+    comment cut off an unquoted value. (The daemon's own core.ini writes
+    enable_websocket = "1" and websocket_url = "wss://...".)"""
+    v = raw.strip()
+    if v[:1] in ("\"", "'"):
+        # A quoted value ends at its closing quote; anything after it (an
+        # inline comment: "wss://..." ; note) is not part of the value.
+        end = v.find(v[0], 1)
+        if end > 0:
+            return v[1:end]
+    for mark in (" ;", "\t;", " #", "\t#"):
+        if mark in v:
+            v = v.split(mark, 1)[0].rstrip()
+    return v
+
+
+def ini_bool(value):
+    """iniparser_getboolean: true for 1, y(es), t(rue), on."""
+    return value[:1].lower() in ("1", "y", "t") or value.lower() == "on"
+
+
+def ini_main(path):
+    """Settings of the [main] section, as a dict. Empty if the file is missing."""
+    values = {}
+    try:
+        with open(path) as f:
+            section = None
+            for line in f:
+                s = line.strip()
+                if s.startswith("["):
+                    section = s
+                elif section == "[main]" and "=" in s and not s.startswith((";", "#")):
+                    k, v = s.split("=", 1)
+                    values[k.strip()] = ini_value(v)
+    except FileNotFoundError:
+        pass
+    return values
+
+
+def set_main(path, name, value):
+    """Set name = value inside [main], leaving every other line alone.
+
+    core.ini has [tx_band*] sections after [main], so the setting must go
+    inside [main] rather than at the end of the file. Returns True if the file
+    changed.
+    """
+    with open(path) as f:
+        lines = f.readlines()
+
+    out, in_main, done, changed = [], False, False, False
+    for line in lines:
+        s = line.strip()
+        if s.startswith("["):
+            if in_main and not done:
+                out.append(f"{name} = {value}\n")
+                done, changed = True, True
+            in_main = (s == "[main]")
+        elif in_main and not done and "=" in s and not s.startswith((";", "#")) \
+                and s.split("=", 1)[0].strip() == name:
+            if s.split("=", 1)[1].strip() != value:
+                line, changed = f"{name} = {value}\n", True
+            done = True
+        out.append(line)
+    if in_main and not done:
+        out.append(f"{name} = {value}\n")
+        changed = True
+
+    if changed:
+        write_atomic(path, "".join(out).encode(), os.stat(path).st_mode & 0o777)
+    return changed
+
+
+def ws_request(url, message, timeout=5.0, cafile=None):
+    """Send one text message to a websocket and return the reply whose "cmd"
+    matches, skipping the state frames the daemon pushes in between."""
+    u = urllib.parse.urlparse(url)
+    host = u.hostname or "127.0.0.1"
+    if host in ("0.0.0.0", "::"):
+        host = "127.0.0.1"
+    port = u.port or (443 if u.scheme == "wss" else 80)
+
+    sock = socket.create_connection((host, port), timeout=timeout)
+    if u.scheme == "wss":
+        # the station's own certificate: self-signed, issued to its hostname
+        ctx = ssl.create_default_context(cafile=cafile) if cafile and os.path.exists(cafile) \
+            else ssl._create_unverified_context()
+        ctx.check_hostname = False
+        sock = ctx.wrap_socket(sock, server_hostname=host)
+
+    key = base64.b64encode(os.urandom(16)).decode()
+    sock.sendall((f"GET {u.path or '/'} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+                  "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                  f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise ConnectionError("closed during the handshake")
+        buf += chunk
+    head, buf = buf.split(b"\r\n\r\n", 1)
+    if b" 101 " not in head.split(b"\r\n", 1)[0]:
+        raise ConnectionError("websocket upgrade refused")
+
+    data, mask = message.encode(), os.urandom(4)
+    frame = bytearray([0x81])
+    if len(data) < 126:
+        frame.append(0x80 | len(data))
+    elif len(data) < 65536:
+        frame += bytes([0x80 | 126]) + len(data).to_bytes(2, "big")
+    else:
+        frame += bytes([0x80 | 127]) + len(data).to_bytes(8, "big")
+    frame += mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+    sock.sendall(bytes(frame))
+
+    wanted = json.loads(message).get("cmd")
+    deadline = time.monotonic() + timeout
+
+    def need(n):
+        nonlocal buf
+        while len(buf) < n:
+            if time.monotonic() > deadline:
+                raise TimeoutError("no answer from the radio daemon")
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("closed before answering")
+            buf += chunk
+        part, buf = buf[:n], buf[n:]
+        return part
+
+    try:
+        while True:
+            b0, b1 = need(2)
+            length = b1 & 0x7F
+            if length == 126:
+                length = int.from_bytes(need(2), "big")
+            elif length == 127:
+                length = int.from_bytes(need(8), "big")
+            mkey = need(4) if b1 & 0x80 else None
+            payload = need(length)
+            if mkey:
+                payload = bytes(b ^ mkey[i % 4] for i, b in enumerate(payload))
+            opcode = b0 & 0x0F
+            if opcode == 0x8:
+                raise ConnectionError("closed before answering")
+            if opcode != 0x1:
+                continue
+            try:
+                reply = json.loads(payload)
+            except ValueError:
+                continue
+            if isinstance(reply, dict) and reply.get("cmd") == wanted:
+                return reply
+    finally:
+        sock.close()
+
+
+def point_daemon(core_ini, key_path, key, reload):
+    """Make the radio daemon use key_path and, if we can reach it, reload."""
+    if not os.path.exists(core_ini):
+        print(f"hermes-voice-key: no {core_ini}, radio daemon not installed; "
+              f"it needs voice_key_file = {key_path} under [main]")
+        return
+
+    if set_main(core_ini, "voice_key_file", key_path):
+        print(f"hermes-voice-key: {core_ini}: voice_key_file = {key_path}")
+
+    if not reload:
+        return
+
+    main = ini_main(core_ini)
+    if not ini_bool(main.get("enable_websocket", "0")):
+        print("hermes-voice-key: the daemon's websocket is off; "
+              "restart the radio daemon to load the key")
+        return
+
+    try:
+        reply = ws_request(main.get("websocket_url", "ws://127.0.0.1:8080"),
+                           json.dumps({"cmd": "voice_key_reload"}),
+                           cafile="/etc/ssl/certs/hermes.radio.crt")
+    except (OSError, TimeoutError, ConnectionError, ValueError) as e:
+        print(f"hermes-voice-key: could not reach the radio daemon ({e}); "
+              "restart it to load the key")
+        return
+
+    theirs = reply.get("fingerprint", "")
+    if reply.get("ok") and reply.get("voice_key_loaded") and theirs == fingerprint(key):
+        print(f"hermes-voice-key: radio daemon reloaded, fingerprint {theirs} matches")
+    else:
+        sys.stdout.flush()
+        print(f"hermes-voice-key: radio daemon did NOT load this key "
+              f"(ok={reply.get('ok')}, loaded={reply.get('voice_key_loaded')}, "
+              f"fingerprint={theirs or '-'}); it now has no key and mutes encrypted overs",
+              file=sys.stderr)
+        sys.exit(2)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--nncp-dir", default=os.environ.get("NNCP_DIR", "/etc/nncp"))
+    ap.add_argument("--out", default=os.environ.get("VOICE_KEY", "/etc/hermes/voice.key"))
+    ap.add_argument("--core-ini", default=os.environ.get("CORE_INI", "/etc/hermes/core.ini"))
+    ap.add_argument("--no-reload", action="store_true",
+                    help="write the key but do not ask the radio daemon to reload it")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("pair", help="key for a call with one neighbour")
+    p.add_argument("peer")
+    g = sub.add_parser("group", help="key shared by the whole network")
+    g.add_argument("area", nargs="?")
+    sub.add_parser("show", help="fingerprint of the installed key")
+    args = ap.parse_args()
+
+    if args.cmd == "show":
+        try:
+            with open(args.out, "rb") as f:
+                key = f.read()
+        except FileNotFoundError:
+            sys.exit(f"hermes-voice-key: {args.out} not found")
+        print(f"{args.out}: fingerprint {fingerprint(key)}")
+        return
+
+    if args.cmd == "pair":
+        key = pair_key(args.nncp_dir, args.peer)
+        what = f"pair key with {args.peer}"
+    else:
+        area = args.area
+        if not area:
+            try:
+                with open(os.environ.get("HERMES_AREA_FILE", "/etc/hermes/nncp-area")) as f:
+                    area = f.read().strip()
+            except FileNotFoundError:
+                sys.exit("hermes-voice-key: no area given and /etc/hermes/nncp-area missing")
+        key = group_key(args.nncp_dir, area)
+        what = f"group key for {area}"
+
+    write_atomic(args.out, key, 0o600)
+    print(f"hermes-voice-key: {what} -> {args.out} (fingerprint {fingerprint(key)})")
+
+    point_daemon(args.core_ini, os.path.abspath(args.out), key, not args.no_reload)
+
+
+if __name__ == "__main__":
+    main()

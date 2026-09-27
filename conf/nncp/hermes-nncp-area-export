@@ -1,0 +1,49 @@
+#!/bin/bash
+#
+# hermes-nncp-area-export: send the broadcast area keypair from the gateway to
+# the stations of this network.
+#
+# The keypair is a shared secret for the whole network, so it is not committed
+# to the installer. It travels over NNCP: encrypted to each station and signed
+# by us. The receiving side installs it with the areakey handler.
+#
+# Usage: hermes-nncp-area-export [AREA] [STATION ...]
+#        with no station, every neighbour of this gateway
+
+set -o nounset
+set -o errexit
+
+NNCP_DIR="${NNCP_DIR:-/etc/nncp}"
+
+area="${1:-$(cat /etc/hermes/nncp-area 2> /dev/null || true)}"
+shift || true
+
+if [ -z "${area}" ]; then
+    echo "$0: no area given and /etc/hermes/nncp-area is empty" >&2
+    exit 1
+fi
+
+d="${NNCP_DIR}/areas/${area}"
+if [ ! -s "${d}/id" ] || [ ! -s "${d}/prv" ]; then
+    echo "$0: no area keypair in ${d} (is this the gateway?)" >&2
+    exit 1
+fi
+
+stations="$*"
+if [ -z "${stations}" ]; then
+    stations="$(for nd in "${NNCP_DIR}"/neigh/*; do
+        [ -d "${nd}" ] || continue
+        nb="$(basename "${nd}")"
+        [ "${nb}" != "self" ] && echo "${nb}"
+    done)"
+fi
+
+for station in ${stations}; do
+    {
+        echo "area: ${area}"
+        echo "id: $(cat "${d}/id")"
+        [ -s "${d}/pub" ] && echo "pub: $(cat "${d}/pub")"
+        echo "prv: $(cat "${d}/prv")"
+    } | nncp-exec -quiet "${station}" areakey
+    echo "$0: area ${area} sent to ${station}"
+done

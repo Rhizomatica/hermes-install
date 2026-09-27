@@ -1,49 +1,73 @@
 # hermes-install
 
-This is the HERMES system installer for HERMES' "gateway" and "remote"
-stations. 
+The installer of HERMES stations, "gateway" and "remote": it turns a
+Debian 13 (trixie) computer with an HF radio into a HERMES station. It
+supports the sBitx on a Raspberry Pi 4 (Raspberry Pi OS Lite 64-bit,
+trixie), CAT radios through Hamlib, and the uBITX on a PC.
 
-The installer works for the sBitx radio, where this installer
-will work on any Debian 12 arm64 OS, like the Raspberry Pi OS. 
-Support for Debian 12 amd64 (x86_64) is temporarilly disabled, and will be fixed soon.
+## Quick start
 
+As root, from this repository's directory:
 
-The syntax is simple, just run as root from this repository's directory:
+```sh
+./hermes-setup                          # menus: networks, station files, install
+./installer.sh station1.hermes.radio    # or install a station directly
+```
 
-* ./installer.sh station.hermes.radio
+`hermes-setup` (it needs `dialog`) creates a network and its station files,
+asking for every setting, and installs a station with the tasks you choose.
+`installer.sh --list-tasks` lists the installer's tasks, and
+`--tasks a,b` runs only those.
 
-where "station.hermes.radio" should be substituted by the station name.
+`stations/` has sample station files (a gateway, `center.hermes.radio`, and
+two stations of the `example` network, `conf/sys.example`,
+`conf/sys-gw.example` and `conf/transport.example`).
 
-Check stations/ directory for station setup profiles.
+## Documentation
 
-# How to create a new setup
+See [docs/](docs/README.md): deploying a network (planning, creating it,
+installing the gateway and stations, testing the mail chain), every station
+file setting, the central server, the package repository, and
+troubleshooting.
 
-This repository comes with station setup samples. There is a
-self-signed SSL key for convenience - please substitute it 
-for a valid key for production use. 
+## Before deploying
 
-# SSL Certificate
+This repository holds no credentials. A deployment adds its own (see
+[Deployment files](docs/deploying-a-network.md#deployment-files)):
 
-A self-signed SSL certificate for `hermes.radio` is provided in
-`conf/ssl/hermes.radio/` for testing and development purposes.
-It is valid until May 2046.
+- `conf/passwd`: the stations' UUCP login. It ships as `user change-me`:
+  change it.
+- `conf/legacy-credentials` (optional, format in
+  `conf/legacy-credentials.example`): fixed passwords for every station.
+  Without it, each station gets random ones, printed at the end of its
+  install and kept in `/etc/hermes/secrets`.
+- The stations' VPN client configurations: `VPN_CONFIG_FILE` in the station
+  file, or `conf/vpn/`. Without one, a station gets no VPN client.
 
-For production use, replace these files with a valid certificate:
+## SSL certificate
+
+A self-signed certificate for `hermes.radio` is provided in
+`conf/ssl/hermes.radio/` for testing and development. It is valid until May
+2046.
+
+For production, replace these files with a valid certificate:
 
 ```
 conf/ssl/hermes.radio/hermes.radio.crt   # your certificate
 conf/ssl/hermes.radio/hermes.radio.key   # your private key
 ```
 
-Alternatively, set `SSL_DOMAIN` in your station profile to use a
-different domain, and place your certificate and key at:
+Alternatively, set `SSL_DOMAIN` in your station file to use another domain,
+and place its certificate and key at:
 
 ```
 conf/ssl/your-domain.com/your-domain.com.crt
 conf/ssl/your-domain.com/your-domain.com.key
 ```
 
-The certificate will be installed to:
+Without a certificate's key, or with `HERMES_HARDENING="true"`, each station
+generates its own. The certificate is installed to:
+
 - `/etc/ssl/certs/hermes.radio.crt` (nginx)
 - `/etc/ssl/private/hermes.radio.key` (nginx)
 - `/etc/dovecot/ssl/mailserver.crt` → symlink

@@ -1,0 +1,13 @@
+[Unit]
+Description=Feed decoded HERMES broadcasts into NNCP
+After=hermes-broadcast.service nncp-daemon.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/hermes-broadcast
+ExecStart=/usr/local/sbin/hermes-broadcast-rx
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

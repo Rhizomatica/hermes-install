@@ -1,0 +1,38 @@
+#!/bin/sh
+# nncp-call with the station's HF timeouts.
+#
+# sudo clears the environment, so "sudo nncp-call" from the API ran with
+# NNCP's 10 s default deadline and every HF call died in the SP handshake.
+# The daemon and the caller read NNCPDEADLINE from /etc/default/nncp-daemon;
+# so does this.
+#
+# Usage: hermes-nncp-call [nncp-call options] NODE
+#        hermes-nncp-call --all [nncp-call options]
+#
+# --all calls, one after the other (there is one modem), every neighbour
+# with packets waiting for it, as uucico -r1 did.
+
+NNCP_DIR="${NNCP_DIR:-/etc/nncp}"
+NNCP_SPOOL="${NNCP_SPOOL:-/var/spool/nncp}"
+
+NNCPDEADLINE=$(sed -n 's/^NNCPDEADLINE=//p' /etc/default/nncp-daemon 2>/dev/null | tail -n 1)
+if [ -n "${NNCPDEADLINE}" ]; then
+    export NNCPDEADLINE
+fi
+
+if [ "$1" != "--all" ]; then
+    exec /usr/bin/nncp-call "$@"
+fi
+shift
+
+rc=0
+for d in "${NNCP_DIR}"/neigh/*/; do
+    alias="$(basename "${d}")"
+    [ "${alias}" = "self" ] && continue
+    [ -s "${d}id" ] || continue
+    id="$(cat "${d}id")"
+    # outbound packets wait in the neighbour's tx spool
+    [ -n "$(ls -A "${NNCP_SPOOL}/${id}/tx" 2>/dev/null)" ] || continue
+    /usr/bin/nncp-call "$@" "${alias}" || rc=$?
+done
+exit ${rc}

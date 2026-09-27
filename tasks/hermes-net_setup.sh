@@ -5,18 +5,33 @@ do_hermesnet_setup()
 
     echo -e "${Red}INSTALLING HERMES-NET${Color_Off}"
 
+    # caller.service as it was before this run: "enabled", "disabled", or
+    # not there at all (see the caller block at the end)
+    local caller_before
+    caller_before="$(systemctl is-enabled caller 2> /dev/null || true)"
+
     mkdir -p ${TMP_PATH}
     cd ${TMP_PATH}
     rm -rf hermes-net
     git clone https://github.com/Rhizomatica/hermes-net
     cd hermes-net/
 
-    if [ ${HERMES_PRODUCTION} = "false" ]; then
+    # HERMES_NET_BRANCH picks the branch outright; otherwise NNCP stations
+    # need the uuxcomp NNCP transport mode, and Debian 12 its maintenance
+    # branch.
+    if [ -n "${HERMES_NET_BRANCH}" ]; then
+        git checkout "${HERMES_NET_BRANCH}"
+    elif [ "${NNCP_ENABLED:-false}" = "true" ]; then
         git fetch
-        git checkout development
+        git checkout nncp-transport
+    elif [ "${VERSION_ID}" = "12" ]; then
+        git fetch --tags
+        git checkout maintenance-debian12
     fi
 
     if [ ${MODEM_TYPE} = "mercury" ]; then
+        # Mercury's build dependencies (its debian/control, less the GUI's)
+        apt-get -y install libasound2-dev libpulse-dev libhamlib-dev libssl-dev pkgconf
         git clone https://github.com/Rhizomatica/mercury
         cd mercury/
         make
@@ -24,15 +39,29 @@ do_hermesnet_setup()
         cd ../ && rm -fr mercury/
     fi
 
-    if [ "${HARDWARE}" = "sbitx" ]; then
-        if [ "${HERMES_ROLE}" = "gateway" ]; then
-            make install_v2
-            make install_gateway
-        elif [ "${HERMES_ROLE}" = "remote" ]; then
+    if [ "${HARDWARE}" = "sbitx" ] || [ "${HARDWARE}" = "hamlib" ]; then
+        if [ "${HERMES_ROLE}" != "gateway" ] && [ "${HERMES_ROLE}" != "remote" ]; then
+            echo -e "${Red}HERMES ROLE - ${HERMES_ROLE} - not recognized. Aborting.${Color_Off}"
+            exit 1
+        fi
+
+        # hermes-net installs only what goes with the station's radio
+        # controller, so that it never replaces the other one's files.
+        if [ "${RADIO_CONTROLLER}" = "radiod" ]; then
+            make common
+            make install_common install_loopback_audio
+            if [ "${HARDWARE}" = "sbitx" ]; then
+                make install_sbitx_hw
+            fi
+        elif [ "${RADIO_CONTROLLER}" = "sbitx_controller" ] && [ "${HARDWARE}" = "sbitx" ]; then
             make install_v2
         else
-            echo "${Red}HERMES ROLE - ${HERMES_ROLE} - not recognized. Aborting.${Color_Off}"
-            exit
+            echo -e "${Red}RADIO_CONTROLLER - ${RADIO_CONTROLLER} - not supported with HARDWARE=${HARDWARE}. Aborting.${Color_Off}"
+            exit 1
+        fi
+
+        if [ "${HERMES_ROLE}" = "gateway" ]; then
+            make install_gateway
         fi
 
         if [ "${MODEM_TYPE}" = "mercury" ]; then
@@ -40,41 +69,22 @@ do_hermesnet_setup()
             make install_mercury
         fi
 
-        set +e
-        systemctl stop sbitx
-        set -e
+        migrate_hermesnet_units
 
-        # Configure user.ini for voice mode if DEFAULT_VOICE is true
-        if [[ "$DEFAULT_VOICE" == "true" ]]; then
-            echo -e "${Red}Configuring sbitx for DEFAULT_VOICE mode${Color_Off}"
-            sed -i 's/^current_profile=.*/current_profile=1/' /etc/sbitx/user.ini
-            sed -i 's/^default_profile=.*/default_profile=1/' /etc/sbitx/user.ini
-            sed -i 's/^default_profile_fallback_timeout=.*/default_profile_fallback_timeout=-1/' /etc/sbitx/user.ini
-            # Set enable_knob_frequency=0 in profile1 section
-            sed -i '/^\[profile1\]/,/^\[/{s/^enable_knob_frequency=.*/enable_knob_frequency=0/}' /etc/sbitx/user.ini
-        fi
+        if [ "${RADIO_CONTROLLER}" = "radiod" ]; then
+            do_radiod_setup
+            cd ${TMP_PATH}/hermes-net/
+        else
+            set +e
+            systemctl stop sbitx
+            set -e
 
-        # Configure custom frequencies and modes if set
-        if [[ -n "${DEFAULT_DATA_FREQUENCY:-}" ]]; then
-            echo -e "${Red}Setting DEFAULT_DATA_FREQUENCY=${DEFAULT_DATA_FREQUENCY}${Color_Off}"
-            sed -i '/^\[profile0\]/,/^\[/{s/^freq=.*/freq='"${DEFAULT_DATA_FREQUENCY}"'/}' /etc/sbitx/user.ini
-        fi
-        if [[ -n "${DEFAULT_DATA_MODE:-}" ]]; then
-            echo -e "${Red}Setting DEFAULT_DATA_MODE=${DEFAULT_DATA_MODE}${Color_Off}"
-            sed -i '/^\[profile0\]/,/^\[/{s/^mode=.*/mode='"${DEFAULT_DATA_MODE}"'/}' /etc/sbitx/user.ini
-        fi
-        if [[ -n "${DEFAULT_VOICE_FREQUENCY:-}" ]]; then
-            echo -e "${Red}Setting DEFAULT_VOICE_FREQUENCY=${DEFAULT_VOICE_FREQUENCY}${Color_Off}"
-            sed -i '/^\[profile1\]/,/^\[/{s/^freq=.*/freq='"${DEFAULT_VOICE_FREQUENCY}"'/}' /etc/sbitx/user.ini
-        fi
-        if [[ -n "${DEFAULT_VOICE_MODE:-}" ]]; then
-            echo -e "${Red}Setting DEFAULT_VOICE_MODE=${DEFAULT_VOICE_MODE}${Color_Off}"
-            sed -i '/^\[profile1\]/,/^\[/{s/^mode=.*/mode='"${DEFAULT_VOICE_MODE}"'/}' /etc/sbitx/user.ini
-        fi
+            configure_radio_profiles /etc/sbitx/user.ini "="
 
-        set +e
-        systemctl start sbitx
-        set -e
+            set +e
+            systemctl start sbitx
+            set -e
+        fi
 
     else
         if [ "${HERMES_ROLE}" = "gateway" ]; then
@@ -83,13 +93,15 @@ do_hermesnet_setup()
         elif [ "${HERMES_ROLE}" = "remote" ]; then
             make install_v1
         else
-            echo "${Red}HERMES ROLE - ${HERMES_ROLE} - not recognized. Aborting.${Color_Off}"
-            exit
+            echo -e "${Red}HERMES ROLE - ${HERMES_ROLE} - not recognized. Aborting.${Color_Off}"
+            exit 1
         fi
         if [[ "${MODEM_TYPE}" = "mercury" ]]; then
             echo -e "${Red}Installing Mercury${Color_Off}"
             make install_mercury
         fi
+
+        migrate_hermesnet_units
 
     fi
 
@@ -110,7 +122,7 @@ do_hermesnet_setup()
 
         echo -e "${Red}VNC SETUP${Color_Off}"
         mkdir -p /root/.vnc
-        echo hermes | vncpasswd -f > /root/.vnc/passwd
+        echo "${VNC_PASSWORD}" | vncpasswd -f > /root/.vnc/passwd
         # old vnc with tigervnc
         # install -C -g root -o root -m 755 ${INSTALLER_DIRECTORY}/conf/xstartup /root/.vnc/xstartup
 
@@ -122,6 +134,11 @@ do_hermesnet_setup()
         set -e
 
         install -C -g root -o root -m 644 ${INSTALLER_DIRECTORY}/conf/x11vnc/vnc.service /etc/systemd/system/vnc.service
+        # without HERMES_HARDENING, VNC answers on the network as it always did
+        if [ "${HERMES_HARDENING}" != "true" ]; then
+            sed -i -e 's/-listen 127.0.0.1/-listen 0.0.0.0/' \
+                   -e '/^# localhost only/d' -e '/^#   ssh -L 5900/d' /etc/systemd/system/vnc.service
+        fi
         install -C -g root -o root -m 644 ${INSTALLER_DIRECTORY}/conf/x11vnc/x11.service /etc/systemd/system/x11.service
         install -C -g root -o root -m 755 ${INSTALLER_DIRECTORY}/conf/x11vnc/xstartup /usr/bin/xstartup
 
@@ -144,20 +161,62 @@ do_hermesnet_setup()
     systemctl disable uuardopd
     set -e
 
-# and make sure we are with latest uucp
-    apt-get -y update
-    apt-get -y install uucp
+# and make sure we are with latest uucp (skip if using NNCP)
+    if [ "${NNCP_ENABLED:-false}" != "true" ]; then
+        apt-get -y update
+        apt-get -y install uucp
+    fi
 
     cd ${INSTALLER_DIRECTORY}
 
-    if [ "${HARDWARE}" = "sbitx" ]; then
+    # The pre-agreed UUCP startup (UUCP_PRE_AGREED, see common.sh) needs a
+    # uucico with -Y: uucpd -F answers with it, the gateway's caller.sh calls
+    # with it.  Options a station set itself in /etc/default/uucpd win.
+    if [ "${NNCP_ENABLED:-false}" != "true" ] && [ "${UUCP_PRE_AGREED}" = "true" ]; then
+        if dpkg --compare-versions "$(dpkg-query -W -f='${Version}' uucp)" ge 1.07-37; then
+            if ! grep -qE '^UUCPD_OPTS=' /etc/default/uucpd; then
+                echo 'UUCPD_OPTS="-a 127.0.0.1 -p 8300 -r vara -o shm -f 2750p -m -F"' >> /etc/default/uucpd
+            fi
+            if [ "${HERMES_ROLE}" = "gateway" ] && ! grep -qE '^UUCICO_HF_OPTS=' /etc/default/uucpd; then
+                echo 'UUCICO_HF_OPTS="-Y"' >> /etc/default/uucpd
+            fi
+        else
+            echo -e "${Red}uucp $(dpkg-query -W -f='${Version}' uucp) has no pre-agreed startup (1.07-37 or later needed); using the normal UUCP handshake${Color_Off}"
+        fi
+    fi
+
+    if [ "${HARDWARE}" = "sbitx" ] || [ "${HARDWARE}" = "hamlib" ]; then
         set +e
         systemctl daemon-reload
-        systemctl enable sbitx
-        systemctl enable uucpd
-
-        systemctl start sbitx
-        systemctl start uucpd
+        # sbitx.service conflicts with radiod.service, but disable the one
+        # not in use too, so that it stays off across reboots.
+        if [ "${RADIO_CONTROLLER}" = "radiod" ]; then
+            controller_unit=radiod.service
+            systemctl disable --now sbitx
+        else
+            controller_unit=sbitx.service
+            systemctl disable --now radiod
+        fi
+        systemctl enable ${controller_unit}
+        # The other units know the controller as hermes-radio.service.  The
+        # controller must open the snd-aloop cables before the modem, so
+        # restart it now: that restarts the modem after it (modem.service is
+        # PartOf hermes-radio.service), undoing the controller restarts done
+        # under the running modem earlier in the install.
+        if [ -x /usr/lib/hermes-net/set_radio_controller.sh ]; then
+            /usr/lib/hermes-net/set_radio_controller.sh ${controller_unit}
+            systemctl restart hermes-radio.service
+        else
+            systemctl start ${controller_unit}
+        fi
+        if [ "${NNCP_ENABLED:-false}" != "true" ]; then
+            # UUCP is this station's transport: one installed with NNCP
+            # before still runs nncp-daemon and nncp-caller, which take the
+            # modem's single TNC connection from uucpd.
+            systemctl disable --now nncp-daemon nncp-caller
+            systemctl enable uucpd
+            systemctl start uucpd
+        fi
         set -e
 
     else
@@ -172,7 +231,7 @@ do_hermesnet_setup()
                 CPPFLAGS="-DRADUINO_VER=2" make trx_v1-firmware
             else
                 echo -e "${Red}RADUINO_VER VARIABLE NOT PROPERLY SET${Color_Off}"
-                exit
+                exit 1
             fi
 
             set +e
@@ -202,10 +261,40 @@ do_hermesnet_setup()
 
         else
             echo -e "${Red}INSTALL_FIRMWARE VARIABLE NOT PROPERLY SET${Color_Off}"
-            exit
+            exit 1
         fi
 
     fi
+
+    # NNCP replaces uucpd, which the ubitx paths above enable
+    if [ "${NNCP_ENABLED:-false}" = "true" ]; then
+        set +e
+        systemctl disable --now uucpd
+        set -e
+    fi
+
+    # A UUCP gateway calls the central server and, on the schedules set in
+    # the GUI, its stations: caller.sh, which install_gateway installs.  No
+    # installer ever enabled it: deployed gateways had it enabled by hand.
+    # So a new gateway gets it enabled, and a gateway that has it keeps its
+    # state (a deployed gateway with it disabled stays so).  A station
+    # reinstalled under another name that is not a gateway stops calling as
+    # one; any other station keeps what it had.  An NNCP gateway uses
+    # nncp-caller instead.
+    set +e
+    systemctl daemon-reload 2> /dev/null
+    if [ "${HERMES_ROLE}" = "gateway" ] && [ "${NNCP_ENABLED:-false}" != "true" ]; then
+        if [ "${caller_before}" = "enabled" ] || [ -z "${caller_before}" ] \
+           || [ "${ORIGINAL_HOSTNAME:-}" != "${HERMES_HOSTNAME}" ]; then
+            systemctl enable caller
+            systemctl restart caller
+        else
+            echo -e "${Red}caller.service is ${caller_before} on this gateway: leaving it so${Color_Off}"
+        fi
+    elif [ "${caller_before}" = "enabled" ] && [ "${ORIGINAL_HOSTNAME:-}" != "${HERMES_HOSTNAME}" ]; then
+        systemctl disable --now caller
+    fi
+    set -e
 
     echo -e "${Red}INSTALLING IWATCH SETUP${Color_Off}"
     cd "${INSTALLER_DIRECTORY}"

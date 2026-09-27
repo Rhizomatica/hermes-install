@@ -29,6 +29,9 @@ then
     sed -i "/$ADDRESS/d" $BASEDIR/$DOMAIN/passwd
     sed -i "/$ADDRESS/d" $BASEDIR/$DOMAIN/shadow
 
+    # the mailbox encryption key goes with the mailbox
+    rm -f "$BASEDIR/$DOMAIN/keybackup/$ADDRESS.key.enc"
+
     systemctl restart postfix
     systemctl restart dovecot
 

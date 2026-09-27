@@ -1,0 +1,63 @@
+#!/bin/bash
+#
+# hermes-tls-renew: this station's own TLS certificate.
+#
+# Replaces the certificate that used to be shipped in the installer, whose
+# private key was the same on every station (and in git). Renews when the
+# certificate is missing, unreadable or expires within RENEW_DAYS.
+#
+# Usage: hermes-tls-renew [--force]
+
+set -o nounset
+set -o errexit
+
+CRT="${CRT:-/etc/ssl/certs/hermes.radio.crt}"
+KEY="${KEY:-/etc/ssl/private/hermes.radio.key}"
+# trx_v2-userland reads the websocket certificate from these paths
+WS_CRT="${WS_CRT:-/etc/ssl/private/hermes.radio.crt}"
+WS_KEY="${WS_KEY:-/etc/ssl/private/hermes.key}"
+# group that may read the key (ssl-cert on a station)
+CERT_GROUP="${CERT_GROUP:-ssl-cert}"
+
+RENEW_DAYS="${RENEW_DAYS:-30}"
+DAYS="${DAYS:-825}"
+CN="${HERMES_TLS_CN:-$(cat /etc/hostname)}"
+
+force=false
+if [ "${1:-}" = "--force" ]; then
+    force=true
+fi
+
+if [ "${force}" = "false" ] && [ -s "${CRT}" ]; then
+    if openssl x509 -in "${CRT}" -noout -checkend $((RENEW_DAYS * 86400)) > /dev/null 2>&1; then
+        echo "hermes-tls-renew: ${CRT} is valid for more than ${RENEW_DAYS} days"
+        exit 0
+    fi
+fi
+
+echo "hermes-tls-renew: generating a certificate for ${CN}"
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "${tmp_dir}"' EXIT
+
+openssl req -x509 -newkey rsa:2048 -sha256 -days "${DAYS}" -nodes \
+    -subj "/CN=${CN}" \
+    -addext "subjectAltName=DNS:${CN},DNS:localhost,IP:127.0.0.1,IP:10.0.0.1" \
+    -addext "basicConstraints=critical,CA:FALSE" \
+    -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+    -addext "extendedKeyUsage=serverAuth" \
+    -keyout "${tmp_dir}/key" -out "${tmp_dir}/crt" 2> /dev/null
+
+install -C -g "${CERT_GROUP}" -m 644 "${tmp_dir}/crt" "${CRT}"
+install -C -g "${CERT_GROUP}" -m 640 "${tmp_dir}/key" "${KEY}"
+install -C -g "${CERT_GROUP}" -m 640 "${tmp_dir}/crt" "${WS_CRT}"
+install -C -g "${CERT_GROUP}" -m 640 "${tmp_dir}/key" "${WS_KEY}"
+
+# dovecot reads the same pair through /etc/dovecot/ssl symlinks
+for unit in nginx dovecot postfix; do
+    if systemctl is-active --quiet "${unit}"; then
+        systemctl reload "${unit}" 2> /dev/null || systemctl restart "${unit}" || true
+    fi
+done
+
+echo "hermes-tls-renew: $(openssl x509 -in "${CRT}" -noout -subject -enddate | tr '\n' ' ')"

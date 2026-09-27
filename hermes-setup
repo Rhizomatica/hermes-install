@@ -1,0 +1,441 @@
+#!/bin/bash
+#
+# hermes-setup: the menu-driven front end of the HERMES installer.
+#
+#   - install (or reinstall) this station, choosing the installer's tasks
+#   - write a new station file, or change one, asking for every setting
+#   - create a network: its UUCP and Postfix files in conf/
+#
+# It only writes files in this directory and runs installer.sh; commit the
+# station and network files it writes, as with ones written by hand.
+
+set -o nounset
+
+cd "$(dirname "$(readlink -f "$0")")"
+INSTALLER_DIRECTORY="$(pwd)"
+
+. setup/lib.sh
+
+BACKTITLE="HERMES setup - ${INSTALLER_DIRECTORY}"
+DIALOG="${DIALOG:-dialog}"
+
+if ! command -v "${DIALOG}" > /dev/null; then
+    if [ "$(id -u)" -eq 0 ] && command -v apt-get > /dev/null; then
+        apt-get -y install dialog || exit 1
+    else
+        echo "hermes-setup needs dialog: apt-get install dialog"
+        exit 1
+    fi
+fi
+
+ERR="$(mktemp)"
+trap 'rm -f "${ERR}"' EXIT
+
+# dialog with its answer on stdout; the exit status is dialog's (0 is OK)
+d()
+{
+    "${DIALOG}" --stdout --cr-wrap --backtitle "${BACKTITLE}" "$@"
+}
+
+msg()
+{
+    d --title "$1" --msgbox "$2" 0 0
+}
+
+# ask_text <title> <prompt> <default>
+ask_text()
+{
+    d --title "$1" --inputbox "$2" 0 70 "$3"
+}
+
+# ask_menu <title> <prompt> <default tag> <tag> <description> ...
+ask_menu()
+{
+    local title="$1" prompt="$2" default="$3"
+    shift 3
+    d --title "${title}" --default-item "${default}" --menu "${prompt}" 0 0 0 "$@"
+}
+
+# ask_bool <title> <prompt> <current true|false>: prints true or false
+ask_bool()
+{
+    local answer
+    answer="$(ask_menu "$1" "$2" "$3" true yes false no)" || return 1
+    echo "${answer}"
+}
+
+# ------------------------------------------------------------------------
+# Installing
+
+installer_tasks()
+{
+    ./installer.sh --list-tasks
+}
+
+install_station()
+{
+    local stations=() f name default station tasks items=() erase_db env=()
+
+    for f in stations/*; do
+        name="${f#stations/}"
+        stations+=("${name}" "$(grep -oP '^UUCP_NET="\K[^"]*' "${f}") $(grep -oP '^HERMES_ROLE="\K[^"]*' "${f}")")
+    done
+
+    default="$(hostname -f 2> /dev/null || hostname)"
+    [ -f "stations/${default}" ] || default="$(hostname)"
+    station="$(ask_menu "Install a station" \
+        "The station to install on this computer.  Its file in stations/ has its settings." \
+        "${default}" "${stations[@]}")" || return
+
+    while IFS=$'\t' read -r name f; do
+        items+=("${name}" "${f}" on)
+    done < <(installer_tasks)
+
+    tasks="$(d --title "Tasks for ${station}" --separate-output \
+        --checklist "The installer's tasks, run in this order.  Uncheck the ones to skip: for a reinstall that changes only the radio, for example, hermesnet alone is enough." \
+        0 0 0 "${items[@]}")" || return
+    if [ -z "${tasks}" ]; then
+        msg "Nothing to do" "No task was selected."
+        return
+    fi
+
+    erase_db="false"
+    if [ -f /root/hermes-setup-done.txt ] && echo "${tasks}" | grep -qx db; then
+        if d --title "Databases" --defaultno --yesno \
+            "This station is installed already, and a reinstall keeps its databases (the messages, users and webmail settings).\n\nErase them and start over?" 0 0; then
+            erase_db="true"
+        fi
+    fi
+
+    if ! d --title "Install ${station}" --yesno \
+        "Run the installer for ${station} with these tasks?\n\n$(echo ${tasks})\n\nIt runs in this terminal, and logs to /var/log/hermes-installer.log." 0 0; then
+        return
+    fi
+
+    if [ "$(id -u)" -ne 0 ]; then
+        msg "Install" "The installer must run as root: sudo ./hermes-setup"
+        return
+    fi
+
+    clear
+    env=(HERMES_ERASE_DB="${erase_db}")
+    set -o pipefail
+    if env "${env[@]}" ./installer.sh "${station}" --tasks "$(echo ${tasks} | tr ' ' ',')" 2>&1 \
+        | tee -a /var/log/hermes-installer.log; then
+        set +o pipefail
+        msg "Install" "The installer finished for ${station}."
+    else
+        set +o pipefail
+        msg "Install" "The installer stopped with an error.  See /var/log/hermes-installer.log."
+    fi
+}
+
+# ------------------------------------------------------------------------
+# Station files
+
+# Ask for every setting of the station in the current shell; returns 1 when
+# cancelled.
+station_edit()
+{
+    local answer nets=() net
+
+    # identity
+    answer="$(d --title "Station" --form \
+        "The station's names.  The hostname is also the name of its file in stations/." 0 0 0 \
+        "Hostname"            1 1 "${HERMES_HOSTNAME}"  1 26 40 253 \
+        "Callsign"            2 1 "${CALLSIGN}"         2 26 20 32 \
+        "UUCP alias"          3 1 "${UUCP_ALIAS}"       3 26 20 32 \
+        "Timezone"            4 1 "${TIMEZONE}"         4 26 40 64 \
+        "Certificate domain"  5 1 "${SSL_DOMAIN}"       5 26 40 253 \
+        "Emergency e-mail"    6 1 "${EMERGENCY_EMAIL}"  6 26 40 253 \
+        "Forward-to-all e-mail" 7 1 "${HERMES_FWD_EMAIL}" 7 26 40 253)" || return 1
+    {
+        read -r HERMES_HOSTNAME
+        read -r CALLSIGN
+        read -r UUCP_ALIAS
+        read -r TIMEZONE
+        read -r SSL_DOMAIN
+        read -r EMERGENCY_EMAIL
+        read -r HERMES_FWD_EMAIL
+    } <<< "${answer}"
+    # the installer's own fallback, spelled out in new station files
+    if [ "${STATION_IS_NEW}" = "true" ] && [ -z "${HERMES_FWD_EMAIL}" ] && [ -n "${HERMES_HOSTNAME}" ]; then
+        HERMES_FWD_EMAIL="todos@${HERMES_HOSTNAME}"
+    fi
+
+    # network and role
+    for net in $(network_list "${INSTALLER_DIRECTORY}"); do
+        nets+=("${net}" "gateway $(network_gateway "${INSTALLER_DIRECTORY}" "${net}"), $(network_stations "${INSTALLER_DIRECTORY}" "${net}" | wc -l) stations")
+    done
+    UUCP_NET="$(ask_menu "Network" "The network of the station.  Create a new one from the main menu first." \
+        "${UUCP_NET}" "${nets[@]}")" || return 1
+    HERMES_ROLE="$(ask_menu "Role" "What the station does in ${UUCP_NET}." "${HERMES_ROLE}" \
+        remote  "A station: calls and is called by its gateway" \
+        gateway "The network's gateway, linked to the central server")" || return 1
+
+    HERMES_LANGUAGE="$(ask_menu "Language" "Language of the station's interface." "${HERMES_LANGUAGE}" \
+        en English es Español pt Português fr Français)" || return 1
+
+    # radio
+    HARDWARE="$(ask_menu "Radio" "The station's radio." "${HARDWARE}" \
+        sbitx  "sBitx (Raspberry Pi)" \
+        hamlib "A CAT radio through Hamlib, such as the IC-7100" \
+        ubitx  "uBITX (PC)")" || return 1
+
+    case "${HARDWARE}" in
+        sbitx)
+            RADIO_CONTROLLER="$(ask_menu "Radio controller" "The program that drives the sBitx." "${RADIO_CONTROLLER}" \
+                radiod           "hermes-radio-daemon" \
+                sbitx_controller "The older sbitx_controller")" || return 1
+            DISPLAY_TYPE="$(ask_menu "Display" "The sBitx's display." "${DISPLAY_TYPE}" \
+                v1 "Original display" v2 "7-inch DSI display (rotated)")" || return 1
+            ;;
+        hamlib)
+            RADIO_CONTROLLER="radiod"
+            answer="$(d --title "Hamlib radio" --form \
+                "The radio as Hamlib sees it.  The model number is in \"rigctl -l\" (3070 is the IC-7100); the audio device is the radio's USB codec, by ALSA card name." 0 0 0 \
+                "Hamlib model"   1 1 "${RIG_MODEL}"        1 20 10 10 \
+                "Serial device"  2 1 "${RIG_DEVICE}"       2 20 30 64 \
+                "Serial rate"    3 1 "${RIG_SERIAL_RATE}"  3 20 10 10 \
+                "PTT type"       4 1 "${RIG_PTT_TYPE}"     4 20 10 16 \
+                "Audio device"   5 1 "${RIG_AUDIO_DEVICE}" 5 20 30 64)" || return 1
+            {
+                read -r RIG_MODEL
+                read -r RIG_DEVICE
+                read -r RIG_SERIAL_RATE
+                read -r RIG_PTT_TYPE
+                read -r RIG_AUDIO_DEVICE
+            } <<< "${answer}"
+            ;;
+        ubitx)
+            local cards=() c
+            for c in conf/asound.state.*; do
+                cards+=("${c#conf/asound.state.}" "")
+            done
+            SOUND_CARD="$(ask_menu "Sound card" "The PC's sound card." "${SOUND_CARD}" "${cards[@]}")" || return 1
+            INSTALL_FIRMWARE="$(ask_menu "uBITX firmware" "Flash the uBITX firmware during the install?" "${INSTALL_FIRMWARE}" \
+                0 "No" 1 "Yes")" || return 1
+            RADUINO_VER="$(ask_menu "Raduino" "The Raduino version." "${RADUINO_VER}" 0 "" 1 "" 2 "")" || return 1
+            ;;
+    esac
+
+    # modem and transport
+    MODEM_TYPE="$(ask_menu "Modem" "The HF modem." "${MODEM_TYPE}" \
+        mercury "Mercury (free software)" \
+        vara    "VARA HF (license key needed)")" || return 1
+    if [ "${MODEM_TYPE}" = "vara" ]; then
+        VARA_KEY="$(ask_text "VARA" "The VARA license key." "${VARA_KEY}")" || return 1
+    fi
+    NNCP_ENABLED="$(ask_menu "Transport" "How mail and files cross the radio link.  Every station of a network must use the same." "${NNCP_ENABLED}" \
+        false "UUCP" \
+        true  "NNCP (experimental: encrypted and authenticated)")" || return 1
+    if [ "${NNCP_ENABLED}" = "false" ]; then
+        UUCP_PRE_AGREED="$(ask_bool "UUCP" "Use the pre-agreed UUCP startup (uucico -Y, uucpd -F)?  It saves about a quarter of a transfer's time.  A gateway using it cannot reach stations that do not have it yet." "${UUCP_PRE_AGREED}")" || return 1
+    fi
+
+    # options
+    local on_gps=off on_login=off on_prod=off on_hard=off on_crypt=off on_voice=off options
+    [ "${HAS_GPS}" = "true" ] && on_gps=on
+    [ "${REQUIRE_LOGIN}" = "true" ] && on_login=on
+    [ "${HERMES_PRODUCTION}" = "true" ] && on_prod=on
+    [ "${HERMES_HARDENING}" = "true" ] && on_hard=on
+    [ "${MAIL_ENCRYPTION}" = "true" ] && on_crypt=on
+    [ "${DEFAULT_VOICE}" = "true" ] && on_voice=on
+    options="$(d --title "Options" --separate-output --checklist "Station options." 0 0 0 \
+        HAS_GPS           "A GPS is connected"                               "${on_gps}" \
+        REQUIRE_LOGIN     "The web interface asks for a login"               "${on_login}" \
+        HERMES_PRODUCTION "Production (unchecked: development branches)"     "${on_prod}" \
+        HERMES_HARDENING  "Hardening: random passwords, own certificate..."  "${on_hard}" \
+        MAIL_ENCRYPTION   "Encrypted mailboxes"                              "${on_crypt}" \
+        DEFAULT_VOICE     "Start in the voice profile"                       "${on_voice}")" || return 1
+    for answer in HAS_GPS REQUIRE_LOGIN HERMES_PRODUCTION HERMES_HARDENING MAIL_ENCRYPTION DEFAULT_VOICE; do
+        if echo "${options}" | grep -qx "${answer}"; then
+            printf -v "${answer}" '%s' true
+        else
+            printf -v "${answer}" '%s' false
+        fi
+    done
+
+    if [ "${HARDWARE}" != "ubitx" ]; then
+        answer="$(d --title "Radio profiles" --form \
+            "Frequencies in Hz, modes such as USB or LSB.  Leave a field empty to keep what the radio has." 0 0 0 \
+            "Data frequency"   1 1 "${DEFAULT_DATA_FREQUENCY}"  1 20 12 12 \
+            "Data mode"        2 1 "${DEFAULT_DATA_MODE}"       2 20 6 6 \
+            "Voice frequency"  3 1 "${DEFAULT_VOICE_FREQUENCY}" 3 20 12 12 \
+            "Voice mode"       4 1 "${DEFAULT_VOICE_MODE}"      4 20 6 6)" || return 1
+        {
+            read -r DEFAULT_DATA_FREQUENCY
+            read -r DEFAULT_DATA_MODE
+            read -r DEFAULT_VOICE_FREQUENCY
+            read -r DEFAULT_VOICE_MODE
+        } <<< "${answer}"
+    fi
+    return 0
+}
+
+# Ask, check, show and save the station in the current shell.  $1 is the
+# file it was loaded from, empty for a new one.
+station_save_flow()
+{
+    local from="$1" problems file tmp
+
+    STATION_IS_NEW="true"
+    [ -n "${from}" ] && STATION_IS_NEW="false"
+
+    while true; do
+        station_edit || return
+        problems="$(station_check "${INSTALLER_DIRECTORY}")"
+        if [ -z "${problems}" ]; then
+            break
+        fi
+        # a missing certificate is only a warning
+        if ! echo "${problems}" | grep -qv "^No certificate for"; then
+            d --title "Warning" --yes-label "Continue" --no-label "Change" --yesno "${problems}" 0 0 && break
+            continue
+        fi
+        msg "Please correct" "${problems}"
+    done
+
+    file="stations/${HERMES_HOSTNAME}"
+    if [ -e "${file}" ] && [ "${file}" != "${from}" ]; then
+        d --title "Overwrite?" --defaultno --yesno "${file} exists.  Replace it?" 0 0 || return
+    fi
+
+    tmp="$(mktemp)"
+    station_render > "${tmp}"
+    d --title "${file}" --exit-label "Next" --textbox "${tmp}" 0 0
+    if d --title "Save" --yesno "Save ${file}?" 0 0; then
+        mv "${tmp}" "${file}"
+        chmod 644 "${file}"
+        if [ -n "${from}" ] && [ "${from}" != "${file}" ] \
+           && d --title "Rename" --yesno "The hostname changed.  Remove the old ${from}?" 0 0; then
+            rm -f "${from}"
+        fi
+    else
+        rm -f "${tmp}"
+        return
+    fi
+
+    if [ "${HERMES_ROLE}" = "remote" ]; then
+        if network_stations "${INSTALLER_DIRECTORY}" "${UUCP_NET}" | grep -q "^${CALLSIGN} "; then
+            msg "Saved" "${file} saved.  ${CALLSIGN} is already in the ${UUCP_NET} network files."
+        elif d --title "Network ${UUCP_NET}" --yesno \
+            "Add ${CALLSIGN} (${UUCP_ALIAS}) to the ${UUCP_NET} network files?\n\nconf/sys.${UUCP_NET} and conf/sys-gw.${UUCP_NET} get the station, and conf/transport.${UUCP_NET} routes ${HERMES_HOSTNAME} to it.  Every station of the network needs a reinstall (the transport task) to know it." 0 0; then
+            if network_add_station "${INSTALLER_DIRECTORY}" "${UUCP_NET}" "${CALLSIGN}" "${UUCP_ALIAS}" "${HERMES_HOSTNAME}" 2> "${ERR}"; then
+                msg "Saved" "${file} saved and ${CALLSIGN} added to ${UUCP_NET}."
+            else
+                msg "Error" "$(cat "${ERR}")"
+            fi
+        fi
+    else
+        local gw
+        gw="$(network_gateway "${INSTALLER_DIRECTORY}" "${UUCP_NET}")"
+        if [ "${gw}" != "${CALLSIGN}" ]; then
+            msg "Gateway" "${file} saved.\n\nThe ${UUCP_NET} network files name ${gw:-no gateway} as the gateway, not ${CALLSIGN}.  Change conf/sys.${UUCP_NET} and conf/sys-gw.${UUCP_NET} if this station replaces it."
+        else
+            msg "Saved" "${file} saved."
+        fi
+    fi
+
+    if [ "${NNCP_ENABLED}" = "true" ]; then
+        msg "NNCP" "After its first install, commit the station's public key as conf/nncp/pub/${HERMES_HOSTNAME} (see README.md)."
+    fi
+}
+
+new_station()
+{
+    local net="${1:-}"
+
+    station_defaults
+    UUCP_NET="${net}"
+    station_save_flow ""
+}
+
+edit_station()
+{
+    local stations=() f station
+
+    for f in stations/*; do
+        stations+=("${f#stations/}" "$(grep -oP '^UUCP_NET="\K[^"]*' "${f}") $(grep -oP '^CALLSIGN="\K[^"]*' "${f}")")
+    done
+    station="$(ask_menu "Change a station" "The station file to change." "" "${stations[@]}")" || return
+    station_load "stations/${station}"
+    station_save_flow "stations/${station}"
+}
+
+# ------------------------------------------------------------------------
+# Networks
+
+new_network()
+{
+    local answer net gw central
+
+    answer="$(d --title "New network" --form \
+        "A network is a gateway and its stations.  Its name is used in the file names (conf/sys.NAME, conf/sys-gw.NAME, conf/transport.NAME) and in each station's UUCP_NET.  The central server is where the gateway sends Internet mail, over the VPN." 0 0 0 \
+        "Network name"      1 1 ""            1 24 20 32 \
+        "Gateway callsign"  2 1 ""            2 24 20 32 \
+        "Central server"    3 1 "10.70.96.1"  3 24 20 64)" || return
+    {
+        read -r net
+        read -r gw
+        read -r central
+    } <<< "${answer}"
+
+    if ! [[ "${net}" =~ ^[A-Za-z0-9_-]+$ ]] || ! [[ "${gw}" =~ ^[A-Za-z0-9-]+$ ]] || [ -z "${central}" ]; then
+        msg "New network" "The name must be letters, digits, _ and -; the callsign letters, digits and dashes; and the central server an address."
+        return
+    fi
+
+    if ! network_create "${INSTALLER_DIRECTORY}" "${net}" "${gw}" "${central}" 2> "${ERR}"; then
+        msg "New network" "$(cat "${ERR}")"
+        return
+    fi
+
+    if d --title "Network ${net}" --yesno \
+        "conf/sys.${net}, conf/sys-gw.${net} and conf/transport.${net} written.\n\nWrite the gateway's station file now?" 0 0; then
+        station_defaults
+        UUCP_NET="${net}"
+        CALLSIGN="${gw}"
+        UUCP_ALIAS="gw"
+        HERMES_ROLE="gateway"
+        station_save_flow ""
+    fi
+
+    while d --title "Network ${net}" --yesno "Add a station to ${net}?" 0 0; do
+        new_station "${net}"
+    done
+}
+
+show_network()
+{
+    local nets=() net text
+
+    for net in $(network_list "${INSTALLER_DIRECTORY}"); do
+        nets+=("${net}" "")
+    done
+    net="$(ask_menu "Networks" "The network to show." "" "${nets[@]}")" || return
+    text="Gateway: $(network_gateway "${INSTALLER_DIRECTORY}" "${net}")\n\nStations (callsign, alias):\n$(network_stations "${INSTALLER_DIRECTORY}" "${net}" | sed 's/^/  /')\n\nStation files:\n$(grep -l "^UUCP_NET=\"${net}\"" stations/* | sed 's|^stations/|  |')"
+    msg "Network ${net}" "${text}"
+}
+
+# ------------------------------------------------------------------------
+
+while true; do
+    choice="$(ask_menu "HERMES" "What to do?" install \
+        install  "Install or reinstall this station" \
+        station  "New station" \
+        edit     "Change a station" \
+        network  "New network" \
+        networks "Show a network" \
+        quit     "Quit")" || break
+
+    case "${choice}" in
+        install)  install_station ;;
+        station)  new_station ;;
+        edit)     edit_station ;;
+        network)  new_network ;;
+        networks) show_network ;;
+        quit)     break ;;
+    esac
+done
+clear

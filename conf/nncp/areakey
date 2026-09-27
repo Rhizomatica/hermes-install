@@ -1,0 +1,81 @@
+#!/bin/bash
+#
+# areakey: NNCP exec handler that installs the broadcast area keypair sent by
+# the gateway.
+#
+# The area keypair is a shared secret for a whole network, so it is never
+# committed to the installer: the gateway generates it once and sends it to
+# each station over NNCP, encrypted to that station and signed by the gateway.
+# NNCP has already checked both by the time this runs.
+#
+# Body on stdin, as written by hermes-nncp-area-export:
+#   area: <name>
+#   id: ...
+#   pub: ...
+#   prv: ...
+#
+# Usage (by NNCP): areakey
+
+set -o nounset
+
+NNCP_DIR="${NNCP_DIR:-/etc/nncp}"
+NNCP_CFG="${NNCP_CFG:-/etc/nncp.hjson}"
+# NNCP runs this handler without the installer's environment: file the
+# broadcasts where the mesh files everything else from the network (the web
+# API's inbox), so they show up in the interface.
+if [ -z "${NNCP_INCOMING:-}" ]; then
+    NNCP_INCOMING="$(cat "${NNCP_DIR}"/neigh/*/incoming 2> /dev/null | head -n 1)"
+fi
+NNCP_INCOMING="${NNCP_INCOMING:-/var/spool/nncp/incoming}"
+
+umask 077
+body="$(mktemp)"
+trap 'rm -f "${body}"' EXIT
+cat > "${body}"
+
+value() { sed -n "s/^$1:[[:space:]]*//p" "${body}" | head -n 1; }
+
+area="$(value area)"
+id="$(value id)"
+pub="$(value pub)"
+prv="$(value prv)"
+
+# a sender must not be able to write outside the areas directory
+area="$(printf '%s' "$(basename "${area}")" | tr -c 'A-Za-z0-9._-' '_')"
+
+if [ -z "${area}" ] || [ -z "${id}" ] || [ -z "${prv}" ]; then
+    echo "areakey: incomplete area key material" >&2
+    exit 1
+fi
+
+d="${NNCP_DIR}/areas/${area}"
+mkdir -p "${d}"
+echo "${id}" > "${d}/id"
+[ -n "${pub}" ] && echo "${pub}" > "${d}/pub"
+echo "${prv}" > "${d}/prv"
+echo "${NNCP_INCOMING}" > "${d}/incoming"
+chmod 600 "${d}/prv"
+
+HERMES_ETC="${HERMES_ETC:-/etc/hermes}"
+if mkdir -p "${HERMES_ETC}" 2> /dev/null; then
+    echo "${area}" > "${HERMES_ETC}/nncp-area"
+fi
+
+# rebuild the configuration this station actually runs with
+tmp_cfg="$(mktemp "${NNCP_CFG}.XXXXXX")"
+if nncp-cfgdir -load "${NNCP_DIR}" > "${tmp_cfg}"; then
+    chmod 640 "${tmp_cfg}"
+    chgrp nncp "${tmp_cfg}" 2> /dev/null || true
+    mv "${tmp_cfg}" "${NNCP_CFG}"
+    # No daemon restart: this handler runs inside an NNCP session, often one
+    # carried by the daemon itself, and restarting it cut the session short
+    # (the rest of the queue stayed behind). Every nncp-toss reads the new
+    # configuration; one now also opens area packets that arrived before the
+    # key, which toss kept after "unknown area".
+    ( sleep 5; nncp-toss -quiet ) > /dev/null 2>&1 &
+    echo "areakey: installed area ${area}"
+else
+    rm -f "${tmp_cfg}"
+    echo "areakey: refusing to install, configuration would be invalid" >&2
+    exit 1
+fi

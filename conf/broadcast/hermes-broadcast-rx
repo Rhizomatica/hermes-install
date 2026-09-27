@@ -1,0 +1,38 @@
+#!/bin/bash
+#
+# hermes-broadcast-rx: take what broadcast_daemon decoded off the air and feed
+# it to NNCP.
+#
+# Anything that is not an NNCP bundle for us (a plain file from another
+# broadcaster, or a bundle for a different area) is left alone: NNCP just
+# ignores what it cannot authenticate.
+
+set -o nounset
+
+RX_DIR="${RX_DIR:-/var/spool/hermes-broadcast/rx}"
+DONE_DIR="${DONE_DIR:-/var/spool/hermes-broadcast/done}"
+INTERVAL="${INTERVAL:-20}"
+
+mkdir -p "${RX_DIR}" "${DONE_DIR}"
+
+while true; do
+    for f in "${RX_DIR}"/*; do
+        [ -f "${f}" ] || continue
+
+        # still being written?
+        size_now="$(stat -c%s "${f}")"
+        sleep 2
+        [ "${size_now}" = "$(stat -c%s "${f}" 2> /dev/null)" ] || continue
+
+        if nncp-bundle -rx -check -quiet < "${f}" 2> /dev/null; then
+            nncp-toss -quiet 2> /dev/null
+            echo "hermes-broadcast-rx: accepted $(basename "${f}")"
+            mv "${f}" "${DONE_DIR}/"
+        else
+            echo "hermes-broadcast-rx: not a bundle for us: $(basename "${f}")"
+            mv "${f}" "${DONE_DIR}/"
+        fi
+    done
+
+    sleep "${INTERVAL}"
+done

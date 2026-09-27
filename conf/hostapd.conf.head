@@ -2,10 +2,11 @@ interface=wlan0
 driver=nl80211
 country_code=BO
 hw_mode=g
-wpa=3
-wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP
+wpa=2
+# WPA3-SAE where the client supports it, WPA2-PSK otherwise. TKIP is gone.
+wpa_key_mgmt=WPA-PSK SAE
 rsn_pairwise=CCMP
+ieee80211w=1
 auth_algs=1
 ieee80211n=1
 accept_mac_file=/etc/hostapd/accept

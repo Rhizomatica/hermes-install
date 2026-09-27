@@ -1,0 +1,7 @@
+[Unit]
+Description=Ship this station's audit log to the gateway over NNCP
+After=nncp-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hermes-auditlog-send

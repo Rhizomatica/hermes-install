@@ -1,0 +1,28 @@
+#!/bin/bash
+#
+# auditlog: NNCP exec handler on the gateway.
+#
+# A station ships its authentication and transport log over the radio with
+# "nncp-exec gw auditlog <station>". The body arrives on stdin, already
+# decrypted and authenticated by NNCP.
+#
+# Usage (by NNCP): auditlog <station name>
+
+set -o nounset
+
+AUDIT_DIR="${AUDIT_DIR:-/var/log/hermes-audit}"
+
+station="${1:-unknown}"
+# never let a sender pick a path
+station="$(printf '%s' "$(basename "${station}")" | tr -c 'A-Za-z0-9._-' '_')"
+station="${station:-unknown}"
+
+mkdir -p "${AUDIT_DIR}"
+chmod 750 "${AUDIT_DIR}"
+
+{
+    echo "=== received $(date -u +%Y-%m-%dT%H:%M:%SZ) from ${station} (NNCP_SENDER=${NNCP_SENDER:-?})"
+    cat
+} >> "${AUDIT_DIR}/${station}.log"
+
+chmod 640 "${AUDIT_DIR}/${station}.log"

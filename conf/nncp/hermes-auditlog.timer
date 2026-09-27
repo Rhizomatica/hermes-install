@@ -1,0 +1,10 @@
+[Unit]
+Description=Ship this station's audit log to the gateway over NNCP, daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=2h
+
+[Install]
+WantedBy=timers.target

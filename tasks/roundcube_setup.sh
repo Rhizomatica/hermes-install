@@ -27,7 +27,7 @@ do_roundcube_setup()
 
         echo "\$config = [];" >> config/config.inc.php
 
-        echo "\$config['db_dsnw'] = 'mysql://roundcube:Cm3cmal@localhost/roundcubemail';" >> config/config.inc.php
+        echo "\$config['db_dsnw'] = 'mysql://roundcube:${ROUNDCUBE_DB_PASSWORD}@localhost/roundcubemail';" >> config/config.inc.php
 
         echo "\$config['imap_host'] = 'localhost:143';" >> config/config.inc.php
         echo "\$config['smtp_host'] = 'localhost:25';" >> config/config.inc.php
@@ -44,7 +44,7 @@ do_roundcube_setup()
         echo "\$config['username_domain'] = '${HERMES_HOSTNAME}';" >> config/config.inc.php
         #echo "\$config['display_product_info'] = 2;" >> config/config.inc.php
 
-        echo "\$config['des_key'] = 'rcmail-a24ByteDESkey*Str';" >> config/config.inc.php
+        echo "\$config['des_key'] = '${ROUNDCUBE_DES_KEY}';" >> config/config.inc.php
 
         #// List of active plugins (in plugins/ directory)
         echo "\$config['plugins'] = [ 'archive', 'zipdownload', ];" >> config/config.inc.php
