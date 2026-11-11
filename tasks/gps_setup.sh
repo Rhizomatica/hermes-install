@@ -12,16 +12,12 @@ do_gps_setup()
 #    cd "${INSTALLER_DIRECTORY}"
 #    rm -rf gps3
 
+    # From the HERMES repository: one version for every station (sensor
+    # data compressed by one paq8px version is readable only by the same
+    # version), built for any CPU. Building it here with -march=native
+    # targeted the emulator's CPU in an image build.
     echo -e "${Red}INSTALLING paq8px${Color_Off}"
-    rm -rf paq8px
-    git clone https://github.com/Rhizomatica/paq8px.git
-    cd paq8px/build
-    cmake -G "Unix Makefiles" -DNDEBUG=ON -DNATIVECPU=ON ..
-    make -j2
-    strip paq8px
-    install -C -g root -o root -m 755 paq8px /usr/bin/paq8px
-    cd "${INSTALLER_DIRECTORY}"
-    rm -rf paq8px
+    apt-get -y install paq8px
 
 
     echo -e "${Red}INSTALLING hermes-sensors (ps: battery mode hardcoded!)${Color_Off}"

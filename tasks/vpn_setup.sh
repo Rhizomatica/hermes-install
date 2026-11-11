@@ -37,15 +37,17 @@ do_vpn_setup()
 
     # A station reinstalled under another name (estacao3 turned into the
     # gateway estacao, say) still has its old name's client enabled: two
-    # tunnels, two addresses.  Switch that one off (its files stay), and only
+    # tunnels, two addresses.  Disable that one (its files stay), and only
     # when the name changes: a reinstall under the same name leaves every
-    # client as it was.
+    # client as it was.  Not --now: an installer run over SSH through that very
+    # tunnel would cut itself off (and the new client is not started until the
+    # first boot).  The old client stops at the next boot.
     if [ -n "${ORIGINAL_HOSTNAME:-}" ] && [ "${ORIGINAL_HOSTNAME}" != "${HERMES_HOSTNAME}" ] \
        && [ "${ORIGINAL_HOSTNAME}" != "${vpn_file_base}" ]; then
         set +e
         if systemctl is-enabled --quiet "openvpn-client@${ORIGINAL_HOSTNAME}.service" 2> /dev/null; then
             echo -e "${Red}Disabling openvpn-client@${ORIGINAL_HOSTNAME}, this station's VPN client under its old name${Color_Off}"
-            systemctl disable --now "openvpn-client@${ORIGINAL_HOSTNAME}.service"
+            systemctl disable "openvpn-client@${ORIGINAL_HOSTNAME}.service"
         fi
         set -e
     fi

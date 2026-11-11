@@ -49,6 +49,7 @@ openvpn \
 dnsmasq \
 wireless-regdb \
 wireless-tools \
+rfkill \
 wpasupplicant \
 iw \
 bc \
@@ -197,6 +198,14 @@ do_system_setup()
             xinit"
         fi
 
+        # the v2 display's kiosk runs on X (startx, .xinitrc with xrandr)
+        if [ "${DISPLAY_TYPE}" = "v2" ]; then
+            PACKAGES="${PACKAGES} \
+            xserver-xorg \
+            xinit \
+            x11-xserver-utils"
+        fi
+
         echo -e "${Red}INSTALLING PACKAGES${Color_Off}"
         DEBIAN_FRONTEND=noninteractive apt-get -y install ${PACKAGES}
 
@@ -237,8 +246,14 @@ do_system_setup()
             set -e
             sleep 3
             rm -rf /root/.wine
-            echo -e "${Red}Running wineboot (This might take some time...)${Color_Off}"
-            wineboot 2> /dev/null
+            if [ "${virtual_env}" = true ]; then
+                # under qemu-user, wineboot spins forever; the image's first
+                # boot on its Raspberry Pi runs it (do_1st_boot_setup.sh)
+                echo -e "${Red}Image: wineboot runs on the station's first boot${Color_Off}"
+            else
+                echo -e "${Red}Running wineboot (This might take some time...)${Color_Off}"
+                wineboot 2> /dev/null
+            fi
 
             set +e
             systemctl start x11
@@ -289,6 +304,15 @@ do_system_setup()
         echo -e "${Red}Creating (or trying to) pi user${Color_Off}"
         useradd -s /bin/bash -m -G sudo,video,adm,dialout,cdrom,audio,plugdev,games,users,input,render,netdev,spi,gpio,i2c,ssl-cert pi
         echo "pi:${PI_PASSWORD}" | chpasswd
+        # Raspberry Pi OS (trixie) ships pi as a placeholder, without a shell
+        # (/usr/sbin/nologin), for its first-boot user setup (userconf-pi) to
+        # fill in; useradd above then does nothing. Give pi its shell, and
+        # where that first-boot setup is still pending (a fresh image), close
+        # it as it would itself, so it doesn't prompt for a new user.
+        usermod -s /bin/bash pi
+        if [ -x /usr/bin/cancel-rename ] && systemctl -q is-enabled userconfig.service 2> /dev/null; then
+            cancel-rename pi
+        fi
         set -e
 
         usermod -a -G sudo,video,adm,dialout,cdrom,audio,plugdev,games,users,input,render,netdev,spi,gpio,i2c,ssl-cert pi

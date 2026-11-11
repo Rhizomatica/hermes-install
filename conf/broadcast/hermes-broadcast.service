@@ -2,12 +2,15 @@
 Description=HERMES broadcast carousel over Mercury
 After=network.target modem.service
 Wants=modem.service
+# Restarted with the modem: broadcast_daemon is Mercury's broadcast client
+# and exits (status 0) when that connection drops, as a modem restart does.
+PartOf=modem.service
 
 [Service]
 Type=simple
 EnvironmentFile=-/etc/default/hermes-broadcast
 ExecStart=/usr/bin/broadcast_daemon $BROADCAST_DAEMON_ARGS
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]

@@ -59,85 +59,64 @@ do_1st_boot_setup()
 
     elif [ "${HARDWARE}" = "sbitx" ] && [ "${virtual_env}" = true ]; then
 
-        echo -e "${Red}Creating 1st boot setup script for ${HARDWARE} in virtual_env${Color_Off}"
+        # An image build (HERMES-tools image_installer.sh, under
+        # systemd-nspawn). What the station needs before its first boot is
+        # done here, in the image; what needs its Raspberry Pi runs once on
+        # that first boot. (This used to be a script for a first boot under
+        # QEMU, which the Raspberry Pi OS trixie kernel no longer completes.)
+
+        echo -e "${Red}Image: 2 GB of swap, created by dphys-swapfile at boot${Color_Off}"
+        echo "CONF_SWAPSIZE=2000" > /etc/dphys-swapfile
+
+        echo -e "${Red}Image: WiFi unblocked${Color_Off}"
+        # systemd-rfkill restores this at boot: 0 is unblocked, 1 blocked.
+        # The name is the Pi 4's WiFi; the first boot unblocks any model.
+        mkdir -p /var/lib/systemd/rfkill
+        echo 0 > "/var/lib/systemd/rfkill/platform-fe300000.mmcnr:wlan"
+
+        echo -e "${Red}Creating the first-boot setup for ${HARDWARE}${Color_Off}"
+        # the installer is not in the image after the build
+        install -D -m 644 conf/eeprom.cfg /usr/share/hermes/eeprom.cfg
         cat << 'EOF' > /usr/bin/hermes_installer.sh
 #!/bin/bash
-# run me as root!
-if [[ $(id -u) -ne 0 ]];
-then
-    echo "Please run as root";
-    exit 1;
-fi
-echo -e "${Red}Setting up 2GB of swap(file)${Color_Off}"
-echo "CONF_SWAPSIZE=2000" > /etc/dphys-swapfile
-dphys-swapfile swapoff
-dphys-swapfile setup
-# dphys-swapfile swapon
-
-echo -e "${Red}HW CLOCK TO UTC${Color_Off}"
+# HERMES: runs once, on the station's first boot on its Raspberry Pi.
+echo "WiFi unblocked, for the access point"
+rfkill unblock wlan || true
+echo "HW clock to UTC"
 timedatectl set-local-rtc 0
-
-echo -e "${Red}Setting 0.5% reserved space in root fs${Color_Off}"
-# qemu for some reason uses /dev/mmcblk1p2 instead of /dev/mmcblk0p2
-tune2fs -m 0.5 /dev/mmcblk1p2
-
-set +e
-echo -e "${Red}Enabling WiFi${Color_Off}"
-# rfkill unblock wlan
-echo 1 > "/var/lib/systemd/rfkill/platform-fe300000.mmcnr:wlan"
-
-echo -e "${Red}Setting default EEPROM boot options${Color_Off}"
-rpi-eeprom-config -a /root/hermes-installer/conf/eeprom.cfg
+echo "0.5% reserved space in the root file system"
+tune2fs -m 0.5 "$(findmnt -n -o SOURCE /)"
+echo "Default EEPROM boot options"
+rpi-eeprom-config -a /usr/share/hermes/eeprom.cfg
 rpi-eeprom-update -a
-set -e
-
-echo -e "${Red}Removing the installer${Color_Off}"
-rm -rf /root/hermes-installer /root/hermes-installer.tar.gz
-rm -rf /root/install
-
-echo -e "${Red}Running apt-get cleanup${Color_Off}"
-apt-get clean
-
-#echo -e "${Red}Removing hermes-1st-boot-setup.sh script${Color_Off}"
-# rm -f /usr/bin/hermes_installer.sh
-
-echo -e "${Red}1st boot setup for ${HARDWARE} in virtual_env done. Waiting a bit for other 1st boot tasks to finish...${Color_Off}"
-i=0
-while [ $i -lt 40 ]; do
-    echo -ne "[*] HERMES Installer waiting... $i\r"
-    sleep 1
-    i=$((i+1))
-done
-
-echo -e "${Red}Removing hermes-1st-boot-setup.service${Color_Off}"
+if command -v wineboot > /dev/null; then
+    echo "Wine prefix for VARA"
+    HOME=/root wineboot
+fi
 systemctl disable hermes-1st-boot-setup.service
-
-echo -e "DONE" > /root/hermes-setup-done.txt
-shutdown -h now
+echo "DONE" > /root/hermes-setup-done.txt
 EOF
         chmod +x /usr/bin/hermes_installer.sh
 
-        # create a systemd service to run the script on 1st boot
         cat << 'EOF' > /etc/systemd/system/hermes-1st-boot-setup.service
 [Unit]
-Description=Hermes 1st Boot Setup
-After=sysinit.target
-Before=sbitx.service
+Description=HERMES first-boot setup (WiFi, EEPROM, root file system, Wine prefix)
+After=local-fs.target
+# VARA (x11.service) starts on the Wine prefix this makes, and the access
+# point on the WiFi this unblocks
+Before=x11.service hostapd.service dnsmasq.service
+ConditionPathExists=!/root/hermes-setup-done.txt
+
 [Service]
 Type=oneshot
-# RemainAfterExit=yes
 ExecStart=/usr/bin/hermes_installer.sh
-StandardInput=tty-force
-StandardOutput=inherit
-StandardError=inherit
 
 [Install]
 WantedBy=multi-user.target
 EOF
-        # enable the service
         systemctl enable hermes-1st-boot-setup.service
 
-        echo -e "${Red}1st boot setup script for ${HARDWARE} in virtual_env created. It will run on next boot.${Color_Off}"
+        echo -e "${Red}First-boot setup created: it runs once, on the station's first boot${Color_Off}"
     else
         echo -e "${Red}No 1st boot setup required for ${HARDWARE} with virtual_env=${virtual_env}${Color_Off}"
     fi

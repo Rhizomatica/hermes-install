@@ -222,6 +222,10 @@ station_edit()
             RADUINO_VER="$(ask_menu "Raduino" "The Raduino version." "${RADUINO_VER}" 0 "" 1 "" 2 "")" || return 1
             ;;
     esac
+    if [ "${HARDWARE}" != "ubitx" ] && [ "${RADIO_CONTROLLER}" = "radiod" ]; then
+        DIGITAL_VOICE="$(ask_bool "Digital voice" "Put the voice profile in digital voice?" "${DIGITAL_VOICE:-false}")" || return 1
+        VOICE_ENCRYPTION="$(ask_bool "Voice encryption" "Encrypt digital voice with the network's key, conf/voice-key/<network>.key?  Every station of the network needs it on.  Encryption is not allowed on amateur bands." "${VOICE_ENCRYPTION:-false}")" || return 1
+    fi
 
     # modem and transport
     MODEM_TYPE="$(ask_menu "Modem" "The HF modem." "${MODEM_TYPE}" \
@@ -229,6 +233,11 @@ station_edit()
         vara    "VARA HF (license key needed)")" || return 1
     if [ "${MODEM_TYPE}" = "vara" ]; then
         VARA_KEY="$(ask_text "VARA" "The VARA license key." "${VARA_KEY}")" || return 1
+    fi
+    if [ "${MODEM_TYPE}" = "mercury" ] && [ "${HARDWARE}" != "ubitx" ] && [ "${RADIO_CONTROLLER}" = "radiod" ]; then
+        MODEM_AUDIO="$(ask_menu "Modem audio" "How Mercury gets the radio's audio from radiod." "${MODEM_AUDIO:-loopback}" \
+            loopback "ALSA loopback cables (snd-aloop)" \
+            rtp      "radiod's RTP streams")" || return 1
     fi
     NNCP_ENABLED="$(ask_menu "Transport" "How mail and files cross the radio link.  Every station of a network must use the same." "${NNCP_ENABLED}" \
         false "UUCP" \

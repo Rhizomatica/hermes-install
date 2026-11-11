@@ -54,7 +54,8 @@ purpose.
 A station reinstalled under another hostname kept its old VPN client
 enabled. The installer now switches off the client of the station's old
 hostname when the hostname changes (and nothing otherwise); on an older
-install, `systemctl disable --now openvpn-client@<old name>`.
+install, `systemctl disable openvpn-client@<old name>` (no `--now`: stopping it
+over an SSH session that runs through the VPN cuts the session).
 
 ### A Hamlib radio on a Raspberry Pi
 

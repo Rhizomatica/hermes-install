@@ -38,6 +38,8 @@ suggestion.
 | `RADIO_CONTROLLER` | `radiod` | `sbitx_controller` on an sBitx, `radiod` with Hamlib | The program that drives the radio: `radiod` (hermes-radio-daemon) or `sbitx_controller`. Only one runs; installing one replaces the other. |
 | `DISPLAY_TYPE` | `v2` | `v1` | sBitx display: `v1` or `v2` (the 7-inch DSI one). |
 | `DIGITAL_VOICE_CODEC` | `dstar` | radiod's own (`radev2`) | sBitx with radiod: what the web interface's Digital voice switch runs, `radev2` (RADEv2, FreeDV) or `dstar` (D-STAR, with the station's callsign without its `-N` as MYCALL). |
+| `DIGITAL_VOICE` | `true` | left as it is | radiod: `true` puts the voice profile (profile 1) in digital voice, in `DIGITAL_VOICE_CODEC`'s codec; `false` takes it out. |
+| `VOICE_ENCRYPTION` | `true` | left as it is | radiod: `true` encrypts digital voice (RADE V2 and D-STAR) with the network's key, `conf/voice-key/<UUCP_NET>.key` (64 hex digits), installed as `/etc/hermes/voice.key`; `false` sends in the clear. Every station of the network needs the same key, and a station with encryption on and no key sends silence. Encryption is not allowed on amateur bands. |
 | `RIG_MODEL` | `3070` | required with `hamlib` | Hamlib model number (`rigctl -l`). |
 | `RIG_DEVICE` | `/dev/ttyUSB0` | `/dev/ttyUSB0` | The radio's CAT serial port. |
 | `RIG_SERIAL_RATE` | `19200` | `19200` | Serial speed. |
@@ -65,6 +67,7 @@ what the radio has.
 | Setting | Example | Default | Meaning |
 |---|---|---|---|
 | `MODEM_TYPE` | `mercury` | `vara` | `mercury` or `vara`. New stations should use Mercury; the default stays VARA so that older station files keep meaning what they did. |
+| `MODEM_AUDIO` | `rtp` | left as it is | radiod with Mercury: how Mercury gets the radio's audio. `loopback`: the snd-aloop cables, keying the radio through radiod's shared memory. `rtp`: radiod's RTP streams on `lo` (`enable_rtp_audio`); radiod keys the radio from the stream, so Mercury's PTT is `none`. Written to `/etc/hermes/core.ini` and `/etc/mercury/mercury.ini`. |
 | `VARA_KEY` | | required with `vara` | The network's VARA license key. |
 | `NNCP_ENABLED` | `false` | `false` | `true` uses NNCP instead of UUCP (experimental; the whole network must switch). |
 | `UUCP_PRE_AGREED` | `true` | `false` | The pre-agreed UUCP startup over HF (`uucpd -F` on every station, `uucico -Y` on calls over the air): about a minute less per call. Needs uucp 1.07-37 or later on **every** station of the network, since a caller using `-Y` cannot reach a station without it. Off by default so that reinstalling one station of a deployed network does not cut it off from the others; turn it on in all of a network's station files once they all have 1.07-37 (`hermes-setup` turns it on for new stations). |

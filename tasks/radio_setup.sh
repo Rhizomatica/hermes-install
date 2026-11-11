@@ -31,6 +31,136 @@ ini_set_section()
     sed -i "/^\[${section}\]/,/^\[/{s|^${key}[[:space:]]*=.*|${key}${sep}${value}|}" "${file}"
 }
 
+# Set "key = value" in one [section] of an ini file, adding the key after
+# the section's last setting, or the section at the end of the file, when
+# missing.
+ini_set()
+{
+    local file="$1" section="$2" key="$3" value="$4"
+
+    touch "${file}"
+    awk -v section="[${section}]" -v key="${key}" -v line="${key} = ${value}" '
+        function header(s) { gsub(/[[:space:]]/, "", s); return s }
+        # blank and comment lines at the end of a section belong to the next
+        function flush() { printf "%s", held; held = "" }
+        /^[[:space:]]*\[/ {
+            if (in_sec && !done) { print line; done = 1 }
+            flush()
+            in_sec = (header($0) == section)
+            print; next
+        }
+        /^[[:space:]]*([;#]|$)/ { held = held $0 "\n"; next }
+        in_sec && !done && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+            flush(); print line; done = 1; next
+        }
+        { flush(); print }
+        END {
+            if (!done) {
+                if (!in_sec) { flush(); print section }
+                print line
+            }
+            flush()
+        }' "${file}" > "${file}.new"
+    cat "${file}.new" > "${file}"
+    rm -f "${file}.new"
+}
+
+# The value of a key in one [section] of an ini file, without quotes.
+ini_get()
+{
+    local file="$1" section="$2" key="$3"
+
+    [ -f "${file}" ] || return 0
+    awk -v section="[${section}]" -v key="${key}" '
+        function header(s) { gsub(/[[:space:]]/, "", s); return s }
+        /^[[:space:]]*\[/ { in_sec = (header($0) == section); next }
+        in_sec && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+            sub(/^[^=]*=[[:space:]]*/, ""); gsub(/"/, ""); sub(/[[:space:]]+$/, "")
+            print; exit
+        }' "${file}"
+}
+
+# Mercury's user interface, on for every station that installs Mercury, in
+# mercury.ini (main:ui_enabled).
+configure_mercury_ui()
+{
+    local ini=/etc/mercury/mercury.ini
+
+    mkdir -p /etc/mercury
+    ini_set ${ini} main ui_enabled true
+}
+
+# How Mercury hears and keys the radio (MODEM_AUDIO), in mercury.ini:
+#   rtp       radiod's RTP streams on lo (main:enable_rtp_audio); radiod keys
+#             the radio from the stream, so Mercury has no PTT of its own
+#   loopback  the snd-aloop cables (ALSA "default", see asound.conf), keying
+#             the radio through radiod's shared memory
+# Unset leaves mercury.ini as it is.
+configure_mercury_audio()
+{
+    local ini=/etc/mercury/mercury.ini
+
+    mkdir -p /etc/mercury
+    case "${MODEM_AUDIO}" in
+        rtp)
+            ini_set ${ini} main sound_system rtp
+            ini_set ${ini} main input_device "\"239.255.72.1,lo\""
+            ini_set ${ini} main output_device "\"239.255.72.2\""
+            ini_set ${ini} ptt method none
+            ;;
+        loopback)
+            ini_set ${ini} main sound_system alsa
+            ini_set ${ini} main input_device "\"default\""
+            ini_set ${ini} main output_device "\"default\""
+            ini_set ${ini} ptt method hermes_shm
+            ;;
+    esac
+}
+
+# Digital voice in the voice profile (DIGITAL_VOICE) and its encryption
+# (VOICE_ENCRYPTION); unset leaves the radio as it is.  Under DSTAR radiod
+# puts a profile saved with digital_voice = 1 in D-STAR mode at its next
+# start, and keeps the mode to go back to in dv_restore_mode.
+configure_digital_voice()
+{
+    local core=/etc/hermes/core.ini user=/etc/hermes/user.ini restore
+
+    case "${DIGITAL_VOICE}" in
+        true)
+            ini_set ${user} profile1 digital_voice 1
+            ;;
+        false)
+            ini_set ${user} profile1 digital_voice 0
+            restore="$(ini_get ${user} profile1 dv_restore_mode)"
+            if [ "$(ini_get ${user} profile1 mode)" = "DSTAR" ] && [ -n "${restore}" ]; then
+                ini_set ${user} profile1 mode "${restore}"
+                ini_set ${user} profile1 dv_restore_mode ""
+            fi
+            ;;
+    esac
+
+    # Every station of the network holds the same key, from the installer's
+    # conf/voice-key/<network>.key.  Encryption is not allowed on amateur
+    # bands.
+    case "${VOICE_ENCRYPTION}" in
+        true)
+            local key="${INSTALLER_DIRECTORY}/conf/voice-key/${UUCP_NET}.key"
+            if ! grep -qxE '[0-9a-fA-F]{64}' "${key}" 2> /dev/null; then
+                echo -e "${Red}VOICE_ENCRYPTION needs ${key}, 64 hex digits. Aborting.${Color_Off}"
+                exit 1
+            fi
+            install -m 600 -o root -g root "${key}" /etc/hermes/voice.key
+            ini_set_main ${core} voice_key_file /etc/hermes/voice.key
+            ini_set_main ${core} rade_encrypt 1
+            ini_set_main ${core} dstar_encrypt 1
+            ;;
+        false)
+            ini_set_main ${core} rade_encrypt 0
+            ini_set_main ${core} dstar_encrypt 0
+            ;;
+    esac
+}
+
 # Apply the station's profile settings (DEFAULT_VOICE, DEFAULT_*_FREQUENCY,
 # DEFAULT_*_MODE) to the controller's user.ini.  The controller rewrites
 # that file while it runs, so it must be stopped first.
@@ -112,18 +242,63 @@ migrate_hermesnet_units()
         mv "${old}" "${old}.pre-dropin"
     done
 
-    systemctl daemon-reload
+    # Not in an image build (installer.sh -v under systemd-nspawn): there is
+    # no running systemd there, and daemon-reload fails, stopping the install.
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+    fi
+}
+
+# radiod has no built-in per-band TX power scales: with no [tx_band*] section
+# covering the frequency the multiplier is 0 ("Error finding band gain!")
+# and nothing is transmitted.  A core.ini kept from an older install, or
+# made from a template that had them commented out, lacks them.  Take the
+# station's own calibration from the old /etc/sbitx/core.ini if there is
+# one, else the defaults of the template that came with this radiod ($1).
+ensure_tx_band_calibration()
+{
+    local core=/etc/hermes/core.ini template="$1" src
+
+    if grep -qE '^\[tx_band0\]' "${core}"; then
+        return 0
+    fi
+
+    for src in /etc/sbitx/core.ini "${template}"; do
+        if grep -qE '^\[tx_band0\]' "${src}" 2> /dev/null; then
+            echo -e "${Red}Adding the TX power calibration of ${src} to ${core}${Color_Off}"
+            printf '\n' >> "${core}"
+            # Only the [tx_band*] sections, not what may follow them.
+            awk '/^\[/ { keep = ($0 ~ /^\[tx_band[0-9]+\]/) } keep' "${src}" >> "${core}"
+            return 0
+        fi
+    done
+
+    echo -e "${Red}WARNING: no [tx_band*] TX power calibration in ${core}: radiod will not transmit${Color_Off}"
 }
 
 do_radiod_setup()
 {
     echo -e "${Red}INSTALLING HERMES-RADIO-DAEMON${Color_Off}"
 
+    # The package lists first: a run of only this task has no system task
+    # before it to refresh them, and the packages below may be newer than
+    # the station's lists.  Without them the old libspecbleach would be
+    # removed and the new one not found, and radiod could not start again.
+    apt-get update
+
+    # A station may still have libspecbleach 0.3.0 installed by hand, as
+    # libspecbleach1: it holds the same libspecbleach.so.0 as the HERMES
+    # repository's libspecbleach0, which has another ABI.
+    if dpkg -s libspecbleach1 > /dev/null 2>&1; then
+        apt-get -y remove libspecbleach-dev libspecbleach1
+    fi
+
     # radiod's build dependencies, by their Debian/HERMES names: libfftw3-dev
-    # carries the single precision fftw3f too, and csdr is the HERMES
-    # repository's libcsdr, headers included.
+    # carries the single precision fftw3f too, and csdr (libcsdr, headers
+    # included), libspecbleach-dev and libmbe-neo-dev (mbelib-neo, D-STAR's
+    # AMBE) come from the HERMES repository.
     apt-get -y install libhamlib-dev libiniparser-dev libasound2-dev libfftw3-dev \
-            libssl-dev libi2c-dev csdr libspecbleach-dev \
+            libssl-dev libi2c-dev csdr libspecbleach-dev libmbe-neo-dev \
             libsndfile1-dev libcw-dev meson ninja-build pkg-config
 
     mkdir -p ${TMP_PATH}
@@ -136,6 +311,7 @@ do_radiod_setup()
     fi
     make
     make install
+    ensure_tx_band_calibration "${PWD}/config/core.ini"
     cd ${TMP_PATH} && rm -rf hermes-radio-daemon
 
     # radio_client speaks sbitx_client's command line; the API and the
@@ -180,5 +356,16 @@ do_radiod_setup()
         ini_set_main ${core} playback_device "${RIG_AUDIO_DEVICE}"
     fi
 
+    # The modem's audio: radiod always opens the snd-aloop cables (the
+    # modem's start waits for them); with rtp it streams to Mercury too.
+    case "${MODEM_AUDIO}" in
+        rtp)      ini_set_main ${core} enable_rtp_audio 1 ;;
+        loopback) ini_set_main ${core} enable_rtp_audio 0 ;;
+    esac
+    if [ "${MODEM_TYPE}" = "mercury" ]; then
+        configure_mercury_audio
+    fi
+
+    configure_digital_voice
     configure_radio_profiles /etc/hermes/user.ini " = "
 }

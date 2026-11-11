@@ -60,10 +60,24 @@ else
 fi
 
 # Branches of hermes-net and hermes-radio-daemon to install, to try one out
-# before it is merged; empty means the usual one (hermes-net's nncp-transport
-# on an NNCP station, maintenance-debian12 on Debian 12, else the default).
+# before it is merged; empty means the usual one (hermes-net's
+# maintenance-debian12 on a Debian 12 UUCP station, else main).
 HERMES_NET_BRANCH="${HERMES_NET_BRANCH:-}"
 HERMES_RADIO_DAEMON_BRANCH="${HERMES_RADIO_DAEMON_BRANCH:-}"
+
+# sBitx with radiod: what the web interface's Digital voice switch runs,
+# radev2 or dstar; empty leaves core.ini as it is (radiod's default, RADE V2).
+DIGITAL_VOICE_CODEC="${DIGITAL_VOICE_CODEC:-}"
+
+# radiod only (see tasks/radio_setup.sh); empty leaves the station as it is.
+# MODEM_AUDIO: how Mercury gets the radio's audio, "loopback" (snd-aloop) or
+# "rtp" (radiod's RTP streams).  DIGITAL_VOICE: "true" puts the voice
+# profile in digital voice.  VOICE_ENCRYPTION: "true" encrypts digital voice
+# with the network's key, conf/voice-key/<UUCP_NET>.key (not on amateur
+# bands).
+MODEM_AUDIO="${MODEM_AUDIO:-}"
+DIGITAL_VOICE="${DIGITAL_VOICE:-}"
+VOICE_ENCRYPTION="${VOICE_ENCRYPTION:-}"
 
 # HARDWARE=hamlib: the radio, as Hamlib sees it.  RIG_MODEL is the Hamlib
 # model number (rigctl -l), e.g. 3070 for the IC-7100.

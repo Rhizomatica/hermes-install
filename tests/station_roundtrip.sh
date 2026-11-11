@@ -49,6 +49,11 @@ effective()
             ubitx)  skip="${skip} RADIO_CONTROLLER DISPLAY_TYPE RIG_MODEL RIG_DEVICE RIG_SERIAL_RATE RIG_PTT_TYPE RIG_AUDIO_DEVICE DEFAULT_VOICE DEFAULT_DATA_FREQUENCY DEFAULT_DATA_MODE DEFAULT_VOICE_FREQUENCY DEFAULT_VOICE_MODE " ;;
         esac
         [ "${MODEM_TYPE}" = "vara" ] || skip="${skip} VARA_KEY "
+        # radiod's own settings
+        if [ "${HARDWARE}" = "ubitx" ] || [ "${RADIO_CONTROLLER}" != "radiod" ]; then
+            skip="${skip} DIGITAL_VOICE VOICE_ENCRYPTION MODEM_AUDIO "
+        fi
+        [ "${MODEM_TYPE}" = "mercury" ] || skip="${skip} MODEM_AUDIO "
 
         for v in ${STATION_VARS} $(grep -oE '^[A-Z_][A-Z0-9_]*=' "$1" | tr -d '=' | sort -u); do
             case "${skip}" in *" ${v} "*) continue ;; esac
