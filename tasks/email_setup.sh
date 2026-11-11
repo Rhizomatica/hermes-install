@@ -70,6 +70,12 @@ do_email_setup()
         else
             rm -f /etc/hermes/mailcrypt
             postconf -e "virtual_transport = virtual"
+            # classic mailboxes: Dovecot without mail_crypt, which would
+            # otherwise look for a key on every message saved over IMAP
+            # (Roundcube's Sent) and find none
+            sed -i -e '/^mail_plugins {$/,/^}$/d' \
+                   -e '/^\s*mail_crypt = yes$/d' \
+                   -e '/^crypt_user_key_/d' /etc/dovecot/dovecot.conf
         fi
 
         # Postfix's mailbox and alias maps, rebuilt from Dovecot's user list:

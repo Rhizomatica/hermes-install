@@ -11,20 +11,18 @@ do_api_setup()
     git clone https://github.com/Rhizomatica/hermes-api
     cd hermes-api/
 
-    # NNCP stations need the API that speaks NNCP (the uucp tools are not
-    # installed there)
-    if [ "${NNCP_ENABLED:-false}" = "true" ]; then
-        git fetch
-        git checkout "${HERMES_API_BRANCH:-nncp-transport}"
-    elif [ -n "${HERMES_API_BRANCH:-}" ]; then
+    # main speaks UUCP and NNCP (HERMES_TRANSPORT below); HERMES_API_BRANCH
+    # tries another branch
+    if [ -n "${HERMES_API_BRANCH:-}" ]; then
         git fetch
         git checkout "${HERMES_API_BRANCH}"
     fi
 
     echo "APP_NAME=hermes-api" > .env
-    echo "APP_ENV=local" >> .env
+    echo "APP_ENV=production" >> .env
     echo "APP_KEY=${API_APP_KEY}" >> .env
-    echo "APP_DEBUG=true" >> .env
+    # no stack traces, paths or queries in the replies to a failed request
+    echo "APP_DEBUG=false" >> .env
     echo "APP_URL=http://localhost" >> .env
     echo "APP_TIMEZONE=${TIMEZONE}" >> .env
     echo "APP_LANGUAGE=${HERMES_LANGUAGE}" >> .env
@@ -99,9 +97,9 @@ do_api_setup()
     echo "MAIL_FROM_NAME=\"HERMES SYSTEM ${HERMES_HOSTNAME}\"" >> .env
 
 
+    # the versions in hermes-api's composer.lock (composer update would
+    # resolve them again, ignoring it)
     HOME=/root COMPOSER_ALLOW_SUPERUSER=1 composer install
-
-    HOME=/root COMPOSER_ALLOW_SUPERUSER=1 composer update
 
     cp -rT . /var/www/station-api/
 
@@ -124,8 +122,9 @@ do_api_setup()
     mkdir -p /var/www/station-api/storage/app/database/
     chmod 777 /var/www/station-api/storage/app/database/
 
-    rm -f api
-    ln -sf /var/www/station-api/public/ /var/www/html/api
+    # -n: on a reinstall /var/www/html/api is already this link, and ln
+    # would otherwise make a new one inside the directory it points to
+    ln -sfn /var/www/station-api/public/ /var/www/html/api
 
     chown -R www-data:www-data /var/www/station-api/
 

@@ -43,21 +43,26 @@ do_secrets_setup()
     if [ ! -s "${SECRETS_FILE}" ] && [ "${HERMES_HARDENING}" != "true" ] && [ -s "${legacy}" ]; then
         echo -e "${Red}Writing the default passwords to ${SECRETS_FILE}${Color_Off}"
 
-        umask 077
-        {
-            echo "# HERMES station secrets: the historical defaults, written $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo '# Set HERMES_HARDENING="true" in the station file for random ones.'
-            echo 'HERMES_SECRETS_LEGACY="true"'
-            grep -E '^(HERMES_DB_PASSWORD|ROUNDCUBE_DB_PASSWORD|ROUNDCUBE_DES_KEY|MAIL_ROOT_PASSWORD|HERMES_EMAILAPI_PASS|VNC_PASSWORD|PI_PASSWORD|WIFI_PASSPHRASE)=' "${legacy}"
-            echo "API_APP_KEY='$(date | openssl passwd -6 -stdin)'"
-        } > "${SECRETS_FILE}"
+        # umask in a subshell: in the installer's own shell it would make
+        # every file the later tasks create unreadable to all but root
+        (
+            umask 077
+            {
+                echo "# HERMES station secrets: the historical defaults, written $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                echo '# Set HERMES_HARDENING="true" in the station file for random ones.'
+                echo 'HERMES_SECRETS_LEGACY="true"'
+                grep -E '^(HERMES_DB_PASSWORD|ROUNDCUBE_DB_PASSWORD|ROUNDCUBE_DES_KEY|MAIL_ROOT_PASSWORD|HERMES_EMAILAPI_PASS|VNC_PASSWORD|PI_PASSWORD|WIFI_PASSPHRASE)=' "${legacy}"
+                echo "API_APP_KEY='$(date | openssl passwd -6 -stdin)'"
+            } > "${SECRETS_FILE}"
+        )
     fi
 
     if [ ! -s "${SECRETS_FILE}" ]; then
         echo -e "${Red}Generating ${SECRETS_FILE}${Color_Off}"
 
-        umask 077
-        cat > "${SECRETS_FILE}" << EOF
+        (
+            umask 077
+            cat > "${SECRETS_FILE}" << EOF
 # HERMES station secrets, generated $(date -u +%Y-%m-%dT%H:%M:%SZ)
 # Keep this file. Losing it means reinstalling the services that use it.
 HERMES_DB_PASSWORD="$(gen_password 24)"
@@ -71,6 +76,7 @@ PI_PASSWORD="$(gen_password 16)"
 WIFI_PASSPHRASE="$(gen_password 12)"
 API_APP_KEY="$(openssl rand -base64 32)"
 EOF
+        )
     fi
 
     chown root:root "${SECRETS_FILE}"

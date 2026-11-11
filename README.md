@@ -43,6 +43,10 @@ This repository holds no credentials. A deployment adds its own (see
   install and kept in `/etc/hermes/secrets`.
 - The stations' VPN client configurations: `VPN_CONFIG_FILE` in the station
   file, or `conf/vpn/`. Without one, a station gets no VPN client.
+- `conf/voice-key/<network>.key` (optional): the network's digital-voice
+  encryption key, 64 hex digits, for station files with
+  `VOICE_ENCRYPTION="true"`. Not on amateur bands. `conf/voice-key/.gitignore`
+  keeps them out of the repository.
 
 ## SSL certificate
 

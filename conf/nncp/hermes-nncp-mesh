@@ -88,10 +88,11 @@ read_station()
     )
 }
 
-# prints how Mercury keys the radio: none, hermes_shm, hamlib, serial or
-# cm108. As Mercury reads it: the legacy [main] radio_model (0 is the HERMES
-# shared memory, above 0 a Hamlib model, below 0 none), overridden by an
-# explicit [ptt] method.
+# prints how Mercury keys the radio: none, hermes_shm, hamlib, serial,
+# cm108 or rtp. As Mercury reads it: the legacy [main] radio_model (0 is the
+# HERMES shared memory, above 0 a Hamlib model, below 0 none), overridden by
+# an explicit [ptt] method. With [main] sound_system = rtp and no PTT method
+# of its own, Mercury keys the radio through its RTP stream to radiod.
 mercury_ptt_method()
 {
     [ -f "${MERCURY_INI}" ] || { echo none; return 0; }
@@ -103,9 +104,12 @@ mercury_ptt_method()
             m = trim($2) + 0
             legacy = (m == 0) ? "hermes_shm" : ((m > 0) ? "hamlib" : "none")
         }
+        section == "[main]" && trim($1) == "sound_system" { sound = trim($2) }
         section == "[ptt]" && trim($1) == "method" { explicit = trim($2) }
         END {
-            if (explicit != "") print explicit
+            if (explicit != "" && explicit != "none") print explicit
+            else if (sound == "rtp") print "rtp"
+            else if (explicit != "") print explicit
             else if (legacy != "") print legacy
             else print "none"
         }' "${MERCURY_INI}"

@@ -19,9 +19,10 @@
 STATION_VARS="HERMES_HOSTNAME CALLSIGN UUCP_ALIAS UUCP_NET HERMES_ROLE \
 HERMES_LANGUAGE TIMEZONE SSL_DOMAIN EMERGENCY_EMAIL HERMES_FWD_EMAIL \
 HARDWARE RADIO_CONTROLLER DISPLAY_TYPE DIGITAL_VOICE_CODEC \
+DIGITAL_VOICE VOICE_ENCRYPTION \
 RIG_MODEL RIG_DEVICE RIG_SERIAL_RATE RIG_PTT_TYPE RIG_AUDIO_DEVICE \
 SOUND_CARD INSTALL_FIRMWARE RADUINO_VER \
-MODEM_TYPE VARA_KEY NNCP_ENABLED UUCP_PRE_AGREED \
+MODEM_TYPE MODEM_AUDIO VARA_KEY NNCP_ENABLED UUCP_PRE_AGREED \
 HAS_GPS GPS_MAP REQUIRE_LOGIN HERMES_HARDENING MAIL_ENCRYPTION \
 DEFAULT_VOICE DEFAULT_DATA_FREQUENCY DEFAULT_DATA_MODE \
 DEFAULT_VOICE_FREQUENCY DEFAULT_VOICE_MODE"
@@ -43,6 +44,8 @@ station_defaults()
     RADIO_CONTROLLER="radiod"
     DISPLAY_TYPE="v2"
     DIGITAL_VOICE_CODEC="radev2"
+    DIGITAL_VOICE="false"
+    VOICE_ENCRYPTION="false"
     RIG_MODEL=""
     RIG_DEVICE="/dev/ttyUSB0"
     RIG_SERIAL_RATE="19200"
@@ -52,6 +55,7 @@ station_defaults()
     INSTALL_FIRMWARE="0"
     RADUINO_VER="1"
     MODEM_TYPE="mercury"
+    MODEM_AUDIO="loopback"
     VARA_KEY=""
     NNCP_ENABLED="false"
     UUCP_PRE_AGREED="true"
@@ -200,11 +204,33 @@ EOF
             ;;
     esac
 
+    if [ "${HARDWARE}" != "ubitx" ] && [ "${RADIO_CONTROLLER}" = "radiod" ]; then
+        if [ -n "${DIGITAL_VOICE}" ]; then
+            cat << EOF
+## The voice profile in digital voice (radiod)
+DIGITAL_VOICE="${DIGITAL_VOICE}"
+EOF
+        fi
+        if [ -n "${VOICE_ENCRYPTION}" ]; then
+            cat << EOF
+## Encrypted digital voice, with conf/voice-key/<net>.key (not on amateur bands)
+VOICE_ENCRYPTION="${VOICE_ENCRYPTION}"
+EOF
+        fi
+    fi
+
     cat << EOF
 
 ## Modem: mercury or vara
 MODEM_TYPE="${MODEM_TYPE}"
 EOF
+    if [ "${MODEM_TYPE}" = "mercury" ] && [ "${HARDWARE}" != "ubitx" ] \
+       && [ "${RADIO_CONTROLLER}" = "radiod" ] && [ -n "${MODEM_AUDIO}" ]; then
+        cat << EOF
+## Mercury's audio from radiod: loopback (snd-aloop) or rtp
+MODEM_AUDIO="${MODEM_AUDIO}"
+EOF
+    fi
     if [ "${MODEM_TYPE}" = "vara" ]; then
         cat << EOF
 VARA_KEY="${VARA_KEY}"
@@ -286,6 +312,35 @@ station_check()
             fi
             ;;
         *) echo "Digital voice \"${DIGITAL_VOICE_CODEC}\" is radev2 or dstar" ;;
+    esac
+    local radiod=false
+    if [ "${HARDWARE}" != "ubitx" ] && [ "${RADIO_CONTROLLER}" = "radiod" ]; then
+        radiod=true
+    fi
+    case "${MODEM_AUDIO}" in
+        "") ;;
+        loopback|rtp)
+            if [ "${radiod}" != "true" ] || [ "${MODEM_TYPE}" != "mercury" ]; then
+                echo "MODEM_AUDIO needs radiod and Mercury"
+            fi
+            ;;
+        *) echo "Modem audio \"${MODEM_AUDIO}\" is loopback or rtp" ;;
+    esac
+    case "${DIGITAL_VOICE}" in
+        ""|false) ;;
+        true) [ "${radiod}" = "true" ] || echo "Digital voice needs radiod" ;;
+        *) echo "DIGITAL_VOICE is true or false" ;;
+    esac
+    case "${VOICE_ENCRYPTION}" in
+        ""|false) ;;
+        true)
+            [ "${radiod}" = "true" ] || echo "Voice encryption needs radiod"
+            if [ -n "${installer_dir}" ] && \
+               ! grep -qxE '[0-9a-fA-F]{64}' "${installer_dir}/conf/voice-key/${UUCP_NET}.key" 2> /dev/null; then
+                echo "Voice encryption needs conf/voice-key/${UUCP_NET}.key, 64 hex digits"
+            fi
+            ;;
+        *) echo "VOICE_ENCRYPTION is true or false" ;;
     esac
     if [ "${HARDWARE}" = "ubitx" ] && [ -n "${installer_dir}" ] \
        && [ ! -f "${installer_dir}/conf/asound.state.${SOUND_CARD}" ]; then

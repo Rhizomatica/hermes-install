@@ -73,7 +73,17 @@ then
     fi
 
     systemctl restart postfix
-    systemctl restart dovecot
+    # doveadm below (the mailbox key) asks the running Dovecot for the user.
+    # An image build (systemd-nspawn) has no systemd to restart it: there,
+    # and only when a key is to be made, Dovecot is started on its own and
+    # stopped again at the end. Its listeners live in Postfix's private/,
+    # which Postfix makes when it starts, and it does not start here.
+    OWN_DOVECOT=false
+    if ! systemctl restart dovecot 2> /dev/null && [ -f "$MAILCRYPT_MARKER" ] && [ -n "$CRYPT_SECRET" ]
+    then
+        install -d -o postfix -g root -m 700 /var/spool/postfix/private
+        dovecot && OWN_DOVECOT=true
+    fi
 
     if [ -f "$MAILCRYPT_MARKER" ] && [ -n "$CRYPT_SECRET" ]
     then
@@ -110,6 +120,11 @@ then
         else
             echo "No $MAILCRYPT_RECOVERY: no recovery copy of this mailbox key was made."
         fi
+    fi
+
+    if [ "$OWN_DOVECOT" = true ]
+    then
+        doveadm stop
     fi
 
     exit 0

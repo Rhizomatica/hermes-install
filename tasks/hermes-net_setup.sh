@@ -16,15 +16,12 @@ do_hermesnet_setup()
     git clone https://github.com/Rhizomatica/hermes-net
     cd hermes-net/
 
-    # HERMES_NET_BRANCH picks the branch outright; otherwise NNCP stations
-    # need the uuxcomp NNCP transport mode, and Debian 12 its maintenance
-    # branch.
+    # HERMES_NET_BRANCH picks the branch outright; otherwise main, which has
+    # uuxcomp's NNCP transport mode too.  A Debian 12 UUCP station keeps the
+    # maintenance branch, which has no NNCP.
     if [ -n "${HERMES_NET_BRANCH}" ]; then
         git checkout "${HERMES_NET_BRANCH}"
-    elif [ "${NNCP_ENABLED:-false}" = "true" ]; then
-        git fetch
-        git checkout nncp-transport
-    elif [ "${VERSION_ID}" = "12" ]; then
+    elif [ "${NNCP_ENABLED:-false}" != "true" ] && [ "${VERSION_ID}" = "12" ]; then
         git fetch --tags
         git checkout maintenance-debian12
     fi
@@ -67,6 +64,7 @@ do_hermesnet_setup()
         if [ "${MODEM_TYPE}" = "mercury" ]; then
             echo -e "${Red}Installing Mercury${Color_Off}"
             make install_mercury
+            configure_mercury_ui
         fi
 
         migrate_hermesnet_units
@@ -99,6 +97,7 @@ do_hermesnet_setup()
         if [[ "${MODEM_TYPE}" = "mercury" ]]; then
             echo -e "${Red}Installing Mercury${Color_Off}"
             make install_mercury
+            configure_mercury_ui
         fi
 
         migrate_hermesnet_units

@@ -35,7 +35,9 @@ do_broadcast_setup()
     # hermes-radio-daemon on a CAT radio) Mercury keys it itself. NNCP must then
     # stop keying on the ARQ plane, or the radio would be keyed twice: re-run
     # the mesh and rewrite the daemon defaults, both of which read mercury.ini.
-    if station_has_shm_keyer; then
+    # A Mercury on radiod's RTP streams (MODEM_AUDIO=rtp) already keys the
+    # radio itself, through the stream.
+    if station_has_shm_keyer && [ "$(hermes-nncp-mesh --mercury-ptt)" != "rtp" ]; then
         MERCURY_INI=/etc/mercury/mercury.ini
         mkdir -p /etc/mercury
         touch "${MERCURY_INI}"
